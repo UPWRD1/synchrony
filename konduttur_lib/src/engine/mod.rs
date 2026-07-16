@@ -225,7 +225,7 @@ fn process_node(
     match payload {
         NodePayload::TrackReader(track_id) => {
             if let Some(track) = project.tracks.get(*track_id) {
-                track.render_into_buf(&project, &mut outputs[0], block_start, channels);
+                track.render_into_buf(project, &mut outputs[0], block_start, channels);
             }
         }
         NodePayload::Native(NativeNodeType::Master) => {

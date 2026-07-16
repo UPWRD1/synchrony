@@ -91,6 +91,6 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
     Ok(Asset {
         samples: Arc::new(samples),
         channels,
-        gain: 15.0,
+        gain: 20.0,
     })
 }
