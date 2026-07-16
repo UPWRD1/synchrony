@@ -6,6 +6,7 @@ new_key_type! {
     pub struct AssetID;
 }
 
+#[derive(Debug, Clone)]
 pub struct Asset {
     pub samples: Arc<Vec<f32>>,
     pub gain: f32,

@@ -1,11 +1,13 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::OnceLock};
 
 use slotmap::new_key_type;
 
 use crate::{
     engine::Tick,
     model::{
+        DataKind,
         arr::clip::{ClipData, ClipID},
+        flow::NodeID,
         project::Project,
     },
 };
@@ -14,11 +16,13 @@ new_key_type! {
    pub struct TrackID;
 }
 
+#[derive(Debug, Clone)]
 pub struct Track {
     pub name: String,
-    pub id: u64,
     pub clips: BTreeMap<Tick, ClipID>,
     pub gain: f32,
+    pub kind: DataKind,
+    pub linked_node_id: OnceLock<NodeID>,
 }
 
 impl Track {
@@ -30,7 +34,7 @@ impl Track {
         channels: u16,
     ) {
         // Deinterleave
-        let block_len = (buf.len() / channels as usize) as Tick;
+        let block_len: Tick = (buf.len() / channels as usize).into();
         let block_end = block_start + block_len;
 
         let lookback = self
@@ -64,9 +68,9 @@ impl Track {
             if overlap_start >= overlap_end {
                 continue;
             }
-            for frame in overlap_start..overlap_end {
-                let src_idx = ((frame - clip.start) as usize) * asset.channels as usize;
-                let dst_idx = ((frame - block_start) as usize) * channels as usize;
+            for frame in (overlap_start.0)..overlap_end.0 {
+                let src_idx = ((frame - clip.start.0) as usize) * asset.channels as usize;
+                let dst_idx = ((frame - block_start.0) as usize) * channels as usize;
                 for ch in 0..channels as usize {
                     let src_ch = ch.min(asset.channels as usize - 1);
                     if let (Some(&sample), Some(dest)) = (
