@@ -25,15 +25,11 @@ impl Project {
     pub fn new() -> Self {
         let mut graph = NodeGraph::default();
 
-        let master_node = {
-            Node {
-                inputs: vec![Socket::new(DataKind::Audio, "in")]
-                    .into_iter()
-                    .collect(),
-                outputs: Default::default(),
-                payload: NodePayload::Native(NativeNodeType::Master),
-            }
-        };
+        let master_node = Node::new(
+            vec![Socket::new(DataKind::Audio, "in", true)],
+            vec![Socket::new(DataKind::Audio, "out", false)],
+            NodePayload::Native(NativeNodeType::Master),
+        );
         let master_node_id = graph.nodes.insert(master_node);
         Self {
             tracks: SlotMap::with_key(),

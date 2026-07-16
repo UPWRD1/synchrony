@@ -14,13 +14,15 @@ pub type SocketIndex = u16;
 pub struct Socket {
     pub kind: DataKind,
     pub name: String,
+    pub visible: bool,
 }
 
 impl Socket {
-    pub fn new(kind: DataKind, name: impl Into<String>) -> Self {
+    pub fn new(kind: DataKind, name: impl Into<String>, visible: bool) -> Self {
         Self {
             kind,
             name: name.into(),
+            visible,
         }
     }
 }

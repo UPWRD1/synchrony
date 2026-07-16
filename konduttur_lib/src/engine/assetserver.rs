@@ -1,7 +1,7 @@
 //! Asset loading — the one place symphonia is used. Fully in-memory decode;
 //! streaming/paging would only change this function's internals.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
 
     // Create a hint to help the format registry guess what format reader is appropriate. In this
     // example we'll leave it empty.
-    let hint = Hint::new();
+    let mut hint = Hint::new();
 
     // Use the default options when reading and decoding.
     let fmt_opts: FormatOptions = Default::default();
@@ -91,6 +91,6 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
     Ok(Asset {
         samples: Arc::new(samples),
         channels,
-        gain: 1.0,
+        gain: 15.0,
     })
 }

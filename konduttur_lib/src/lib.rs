@@ -10,7 +10,7 @@ static A: AllocDisabler = AllocDisabler;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{EngineError, assetserver};
+    use crate::engine::assetserver;
     use crate::model::project::Project;
     use anyhow::{Context, Result};
 
@@ -41,16 +41,16 @@ mod tests {
         println!("output device config: {sample_rate} Hz, {channels} ch, format {sample_format:?}");
 
         let project = Arc::new(Project::new());
-        dbg!(&project);
+
         // --- 2. Build the project through the real API, not by hand --------
         let mut engine = Engine::new(project);
 
-        let kick_asset = engine.load_asset(assetserver::load_audio_asset(
-            "./../assets/clap.m4a",
+        let clap_asset = engine.load_asset(assetserver::load_audio_asset(
+            "./assets/clap.mp3",
             sample_rate,
         )?);
-        let bass_asset = engine.load_asset(assetserver::load_audio_asset(
-            "./../assets/snap.m4a",
+        let snap_asset = engine.load_asset(assetserver::load_audio_asset(
+            "./assets/snap.mp3",
             sample_rate,
         )?);
 
@@ -63,32 +63,32 @@ mod tests {
             kind: DataKind::Audio,
         })?;
 
-        let (kick_track, bass_track) = {
+        let (clap_track, snap_track) = {
             let ids: Vec<_> = engine.project().tracks.keys().collect();
             (ids[0], ids[1])
         };
 
-        let kick_len = {
-            let asset = &engine.project().assets[kick_asset];
-            asset.samples.len() as u64 / asset.channels as u64
+        let clap_len = {
+            let asset = &engine.project().assets[clap_asset];
+            asset.samples.len() as u64 // asset.channels as u64
         };
-        let bass_len = {
-            let asset = &engine.project().assets[bass_asset];
-            asset.samples.len() as u64 / asset.channels as u64
+        let snap_len = {
+            let asset = &engine.project().assets[snap_asset];
+            asset.samples.len() as u64 // asset.channels as u64
         };
 
         engine.apply(Command::AddClip {
-            track: kick_track,
-            start: engine::Tick(0),
-            length: engine::Tick(kick_len),
-            asset: kick_asset,
+            track: clap_track,
+            start: engine::tick::Tick(0),
+            length: engine::tick::Tick(clap_len),
+            asset: clap_asset,
         })?;
         // Starts right where the kick clip ends -- sequenced across two tracks.
         engine.apply(Command::AddClip {
-            track: bass_track,
-            start: engine::Tick(kick_len),
-            length: engine::Tick(bass_len),
-            asset: bass_asset,
+            track: snap_track,
+            start: engine::tick::Tick(1000),
+            length: engine::tick::Tick(snap_len),
+            asset: snap_asset,
         })?;
 
         // --- 3. Hand the audio thread its read handle -----------------------
@@ -104,12 +104,14 @@ mod tests {
              (TODO: convert via cpal::Sample for I16/U16 devices)"
             ),
         };
-
+        println!("Press enter to play");
+        let mut buf = String::new();
+        std::io::stdin().read_line(&mut buf)?;
         // Stream has to stay alive for audio to keep playing -- this local
         // binding, held until the end of main(), is what does that.
         stream.play()?;
 
-        println!("playing... press enter to quit");
+        println!("Playing... press enter to quit");
         let mut buf = String::new();
         std::io::stdin().read_line(&mut buf)?;
         Ok(())
@@ -143,7 +145,7 @@ mod tests {
                 let mixed = execute_block(
                     &state.schedule,
                     &state.project,
-                    engine::Tick(start),
+                    engine::tick::Tick(start),
                     frame_count,
                     channels,
                     &mut pool,
@@ -154,7 +156,7 @@ mod tests {
                 }
             },
             move |err| eprintln!("audio stream error: {err}"),
-            None, // no timeout on stream creation
+            None,
         )?;
 
         Ok(stream)

@@ -1,6 +1,6 @@
 use slotmap::new_key_type;
 
-use crate::{engine::Tick, model::asset::AssetID};
+use crate::{engine::tick::Tick, model::asset::AssetID};
 
 new_key_type! {
     pub struct ClipID;

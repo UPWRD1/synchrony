@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, sync::OnceLock};
 use slotmap::new_key_type;
 
 use crate::{
-    engine::Tick,
+    engine::tick::Tick,
     model::{
         DataKind,
         arr::clip::{ClipData, ClipID},

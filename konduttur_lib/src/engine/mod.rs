@@ -3,7 +3,9 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, OnceLock};
 use thiserror::Error;
 pub mod assetserver;
+pub mod tick;
 
+use crate::engine::tick::Tick;
 use crate::model::{
     DataKind,
     arr::{
@@ -14,38 +16,6 @@ use crate::model::{
     flow::{Link, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex},
     project::Project,
 };
-
-/// Atomic unit of time within the engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Tick(pub u64);
-
-impl From<u64> for Tick {
-    fn from(value: u64) -> Self {
-        Self(value)
-    }
-}
-
-impl From<usize> for Tick {
-    fn from(value: usize) -> Self {
-        Self(value as u64)
-    }
-}
-
-impl std::ops::Add for Tick {
-    type Output = Tick;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        Self(self.0 + rhs.0)
-    }
-}
-
-impl std::ops::Sub for Tick {
-    type Output = Tick;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        Self(self.0 - rhs.0)
-    }
-}
 
 // ---------------------------------------------------------------------
 // Compiled schedule
@@ -290,6 +260,33 @@ pub enum Command {
     RemoveLink(NodeID, SocketIndex, NodeID, SocketIndex),
 }
 
+impl std::fmt::Display for Command {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Command::AddTrack { name, kind } => write!(f, "Added {kind:?} track \"{name}\""),
+            Command::RemoveTrack(track_id) => todo!(),
+            Command::AddClip {
+                track,
+                start,
+                length,
+                asset,
+            } => {
+                write!(
+                    f,
+                    "Added clip {asset:?} to {track:?} at {start:?} for {length:?} ticks"
+                )
+            }
+            Command::MoveClip {
+                track,
+                clip,
+                new_start,
+            } => todo!(),
+            Command::AddLink { from, to } => todo!(),
+            Command::RemoveLink(node_id, _, node_id1, _) => todo!(),
+        }
+    }
+}
+
 /// What the audio thread reads. Today this is "the whole Project plus its
 /// compiled schedule"; splitting Project into a separately-published
 /// TimelineSnapshot (per the earlier design) is a later optimization that
@@ -346,6 +343,7 @@ impl Engine {
 
     pub fn apply(&mut self, cmd: Command) -> Result<(), EngineError> {
         let mut next = (*self.current).clone();
+        println!("{cmd}");
         apply_command(&mut next, cmd)?;
         self.commit(next);
         Ok(())
@@ -507,11 +505,14 @@ fn add_track(project: &mut Project, name: String, kind: DataKind) -> Result<(), 
     });
     let node = Node::new(
         vec![],
-        vec![Socket::new(kind, "out")],
+        vec![Socket::new(kind, "out", true)],
         NodePayload::TrackReader(track_id),
     );
     let node_id = project.graph.nodes.insert(node);
-    project.tracks[track_id].linked_node_id.set(node_id);
+    project.tracks[track_id]
+        .linked_node_id
+        .set(node_id)
+        .expect("Track should not already have a linked NodeID");
     // Convenience default: new tracks route straight to master.
     // Same AddLink path a user rewiring Flow view would go through.
     let master = project.master_node_id;
