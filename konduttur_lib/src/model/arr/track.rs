@@ -1,11 +1,11 @@
-use std::{collections::BTreeMap, sync::OnceLock};
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
 use crate::{
     engine::tick::Tick,
-    model::{DataKind, Renderable, arr::clip::ClipID, flow::NodeID, project::Project},
+    model::{DataKind, Renderable, arr::clip::ClipID, flow::NodeID, project::ProjectData},
 };
 
 new_key_type! {
@@ -22,7 +22,7 @@ pub struct Track {
 }
 
 impl Renderable for Track {
-    fn render(&self, proj: &Project, buf: &mut [f32], block_start: Tick, channels: u16) {
+    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16) {
         // Deinterleave
         let block_len: Tick = (buf.len() / channels as usize).into();
         let block_end = block_start + block_len;

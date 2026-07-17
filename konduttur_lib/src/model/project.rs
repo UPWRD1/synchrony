@@ -12,11 +12,12 @@ use crate::{
         flow::{Link, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex},
     },
 };
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Project {
+pub struct ProjectData {
     pub tracks: SlotMap<TrackID, Track>,
     pub clips: SlotMap<ClipID, Clip>,
     pub assets: SlotMap<AssetID, Asset>,
@@ -24,7 +25,7 @@ pub struct Project {
     pub master_node_id: NodeID,
 }
 
-impl Project {
+impl ProjectData {
     pub fn new() -> Self {
         let mut graph = NodeGraph::default();
 
@@ -45,40 +46,40 @@ impl Project {
 
     pub fn remove_link(
         &mut self,
-        from: (NodeID, u16),
-        to: (NodeID, u16),
-    ) -> Result<(), EngineError> {
+        from: (NodeID, SocketIndex),
+        to: (NodeID, SocketIndex),
+    ) -> Result<()> {
         self.graph
             .links
             .retain(|_, l| !(l.from == from && l.to == to));
         Ok(())
     }
 
-    pub fn add_link(&mut self, from: (NodeID, u16), to: (NodeID, u16)) -> Result<(), EngineError> {
+    pub fn add_link(
+        &mut self,
+        from: (NodeID, SocketIndex),
+        to: (NodeID, SocketIndex),
+    ) -> Result<()> {
         let from_kind = self.socket_kind_of(from, true)?;
         let to_kind = self.socket_kind_of(to, false)?;
         if !from_kind.can_connect_to(to_kind) {
             return Err(EngineError::IncompatibleSockets {
                 from: from_kind,
                 to: to_kind,
-            });
+            }
+            .into());
         }
         self.graph.links.insert(Link { from, to });
         if self.topo_sort().is_err() {
             self.graph
                 .links
                 .retain(|_, l| !(l.from == from && l.to == to));
-            return Err(EngineError::WouldCreateCycle);
+            return Err(EngineError::WouldCreateCycle.into());
         }
         Ok(())
     }
 
-    pub fn move_clip(
-        &mut self,
-        track: TrackID,
-        clip: ClipID,
-        new_start: Tick,
-    ) -> Result<(), EngineError> {
+    pub fn move_clip(&mut self, track: TrackID, clip: ClipID, new_start: Tick) -> Result<()> {
         let track = self
             .tracks
             .get_mut(track)
@@ -97,7 +98,7 @@ impl Project {
         start: Tick,
         length: Tick,
         asset: AssetID,
-    ) -> Result<(), EngineError> {
+    ) -> Result<()> {
         let clip_id = self.clips.insert(Clip {
             start,
             length,
@@ -111,7 +112,7 @@ impl Project {
         Ok(())
     }
 
-    pub fn remove_track(&mut self, track_id: TrackID) -> Result<(), EngineError> {
+    pub fn remove_track(&mut self, track_id: TrackID) -> Result<()> {
         let track = self
             .tracks
             .remove(track_id)
@@ -127,7 +128,7 @@ impl Project {
         Ok(())
     }
 
-    pub fn add_track(&mut self, name: String, kind: DataKind) -> Result<(), EngineError> {
+    pub fn add_track(&mut self, name: String, kind: DataKind) -> Result<()> {
         let track_id = self.tracks.insert(Track {
             name,
             kind,
@@ -179,7 +180,7 @@ impl Project {
     /// graphs are tiny so it doesn't matter yet.
     /// Kahn's algorithm, shared by compile_graph (which needs the order) and
     /// link validation (which only needs to know whether an order exists).
-    fn topo_sort(&self) -> Result<Vec<NodeID>, EngineError> {
+    fn topo_sort(&self) -> Result<Vec<NodeID>> {
         let mut in_degree: HashMap<NodeID, usize> =
             self.graph.nodes.keys().map(|id| (id, 0)).collect();
         for link in self.graph.links.values() {
@@ -207,12 +208,12 @@ impl Project {
             }
         }
         if order.len() != self.graph.nodes.len() {
-            return Err(EngineError::WouldCreateCycle);
+            return Err(EngineError::WouldCreateCycle.into());
         }
         Ok(order)
     }
 
-    pub fn compile_graph(&self) -> Result<CompiledGraph, EngineError> {
+    pub fn compile_graph(&self) -> Result<CompiledGraph> {
         let order = self.topo_sort()?;
 
         let mut output_slot: HashMap<(NodeID, SocketIndex), usize> = HashMap::new();
@@ -256,7 +257,7 @@ impl Project {
     }
 }
 
-impl Default for Project {
+impl Default for ProjectData {
     fn default() -> Self {
         Self::new()
     }

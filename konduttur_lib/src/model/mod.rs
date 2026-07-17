@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{engine::tick::Tick, model::project::Project};
+use crate::{engine::tick::Tick, model::project::ProjectData};
 
 pub mod arr;
 pub mod asset;
@@ -21,5 +21,5 @@ impl DataKind {
 }
 
 pub trait Renderable {
-    fn render(&self, proj: &Project, buf: &mut [f32], block_start: Tick, channels: u16);
+    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16);
 }

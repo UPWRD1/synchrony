@@ -9,7 +9,7 @@ new_key_type! {
     pub struct LinkID;
 }
 
-pub type SocketIndex = u16;
+pub type SocketIndex = usize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Socket {

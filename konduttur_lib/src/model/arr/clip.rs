@@ -27,7 +27,7 @@ pub enum ClipData {
 impl Renderable for Clip {
     fn render(
         &self,
-        proj: &crate::model::project::Project,
+        proj: &crate::model::project::ProjectData,
         buf: &mut [f32],
         block_start: Tick,
         channels: u16,

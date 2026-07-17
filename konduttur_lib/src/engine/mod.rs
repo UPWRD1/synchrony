@@ -1,36 +1,42 @@
+use anyhow::Result;
 use arc_swap::ArcSwap;
+use assert_no_alloc::assert_no_alloc;
+use cpal::{SampleFormat, StreamConfig};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use thiserror::Error;
+
 pub mod assetserver;
+pub mod engineconfig;
 pub mod tick;
 
-use crate::engine::tick::Tick;
-use crate::model::Renderable;
+use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 use crate::model::{
-    DataKind,
+    DataKind, Renderable,
     arr::{clip::ClipID, track::TrackID},
     asset::{Asset, AssetID},
     flow::{NativeNodeType, NodeID, NodePayload, SocketIndex},
-    project::Project,
+    project::ProjectData,
 };
 
 // ---------------------------------------------------------------------
 // Compiled schedule
 // ---------------------------------------------------------------------
+pub type SlotIndex = usize;
 
 pub struct ScheduleStep {
     pub node: NodeID,
     /// One entry per input socket; each entry lists every buffer slot
     /// feeding it (0 = unconnected, 1 = normal, 2+ = fan-in summed).
-    pub input_sources: Vec<Vec<usize>>,
+    pub input_sources: Vec<Vec<SlotIndex>>,
     /// One entry per output socket.
-    pub output_slots: Vec<usize>,
+    pub output_slots: Vec<SlotIndex>,
 }
 
 pub struct CompiledGraph {
     pub steps: Vec<ScheduleStep>,
     pub buffer_count: usize,
-    pub master_output_slot: usize,
+    pub master_output_slot: SlotIndex,
 }
 
 #[derive(Debug, Error)]
@@ -79,15 +85,79 @@ impl BufferPool {
     }
 }
 
+pub struct BlockBufferPool {
+    /// Contiguous pre-allocated block: (buffer_count * block_size)
+    memory: Vec<f32>,
+    block_size: usize,
+}
+
+impl BlockBufferPool {
+    pub fn new(buffer_count: usize, block_size: usize) -> Self {
+        Self {
+            memory: vec![0.0f32; buffer_count * block_size],
+            block_size,
+        }
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        self.memory.fill(0.0f32);
+    }
+
+    /// Creates an execution context that allows unsafe, arbitrary slot slicing
+    /// while keeping the unsafe code safely isolated.
+    #[inline]
+    pub fn executor(&mut self) -> PoolExecutor {
+        PoolExecutor {
+            ptr: self.memory.as_mut_ptr(),
+            block_size: self.block_size,
+            // Track length to avoid out-of-bounds memory access in debug mode
+            total_len: self.memory.len(),
+        }
+    }
+}
+
+/// A short-lived handle for zero-allocation, arbitrary buffer slicing
+pub struct PoolExecutor {
+    ptr: *mut f32,
+    block_size: usize,
+    total_len: usize,
+}
+
+impl PoolExecutor {
+    /// Get a read-only view of a slot.
+    /// Safety: Assumes no other code is actively writing to this slot right now.
+    #[inline]
+    pub fn get_input(&self, slot: SlotIndex) -> &[f32] {
+        unsafe {
+            let offset = slot * self.block_size;
+            debug_assert!(offset + self.block_size <= self.total_len);
+            std::slice::from_raw_parts(self.ptr.add(offset), self.block_size)
+        }
+    }
+
+    /// Get a mutable view of a slot.
+    /// Safety: Assumes no other code is actively reading or writing to this slot right now.
+    #[inline]
+    pub fn get_output(&mut self, slot: SlotIndex) -> &mut [f32] {
+        unsafe {
+            let offset = slot * self.block_size;
+            debug_assert!(offset + self.block_size <= self.total_len);
+            std::slice::from_raw_parts_mut(self.ptr.add(offset), self.block_size)
+        }
+    }
+}
+
 /// Runs the compiled schedule for one block and returns the master mix.
 pub fn execute_block<'a>(
     schedule: &CompiledGraph,
-    project: &Project,
+    project: &ProjectData,
     block_start: Tick,
     frame_count: usize,
     channels: u16,
     pool: &'a mut BufferPool,
 ) -> &'a [f32] {
+    // assert_no_alloc(|| {
     let sample_count = frame_count * channels as usize;
     pool.ensure(schedule.buffer_count, sample_count);
 
@@ -105,6 +175,8 @@ pub fn execute_block<'a>(
             }
             inputs.push(acc);
         }
+        let v = &inputs.get(0).map_or_else(|| 0, |f| f.len());
+        dbg!(v);
 
         let mut outputs: Vec<Vec<f32>> = step
             .output_slots
@@ -128,11 +200,12 @@ pub fn execute_block<'a>(
     }
 
     &pool.buffers[schedule.master_output_slot][..sample_count]
+    // })
 }
 
 fn process_node(
     payload: &NodePayload,
-    project: &Project,
+    project: &ProjectData,
     block_start: Tick,
     channels: u16,
     inputs: &[Vec<f32>],
@@ -177,6 +250,7 @@ pub enum Command {
         from: (NodeID, SocketIndex),
         to: (NodeID, SocketIndex),
     },
+    Play,
 }
 
 impl std::fmt::Display for Command {
@@ -202,6 +276,7 @@ impl std::fmt::Display for Command {
             } => todo!(),
             Command::AddLink { from, to } => todo!(),
             Command::RemoveLink { from, to } => todo!(),
+            Self::Play => write!(f, "Playing track from"),
         }
     }
 }
@@ -211,19 +286,21 @@ impl std::fmt::Display for Command {
 /// TimelineSnapshot (per the earlier design) is a later optimization that
 /// doesn't change anything on the Engine/Command side.
 pub struct RenderState {
-    pub project: Arc<Project>,
+    pub project: Arc<ProjectData>,
     pub schedule: Arc<CompiledGraph>,
 }
 
 pub struct Engine {
-    current: Arc<Project>,
-    undo_stack: Vec<Arc<Project>>,
-    redo_stack: Vec<Arc<Project>>,
+    pub config: EngineConfig,
+    pub playhead: Arc<AtomicU64>,
+    current: Arc<ProjectData>,
+    undo_stack: Vec<Arc<ProjectData>>,
+    redo_stack: Vec<Arc<ProjectData>>,
     publish: Arc<ArcSwap<RenderState>>,
 }
 
 impl Engine {
-    pub fn new(project: Arc<Project>) -> Self {
+    pub fn new(project: Arc<ProjectData>) -> Result<Self> {
         let schedule = project
             .compile_graph()
             .expect("fresh project graph is always acyclic");
@@ -232,12 +309,14 @@ impl Engine {
             project: project.clone(),
             schedule: Arc::new(schedule),
         }));
-        Self {
+        Ok(Self {
+            config: EngineConfig::create()?,
             current: project,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             publish,
-        }
+            playhead: Arc::new(AtomicU64::new(0)),
+        })
     }
 
     /// Clone this and hand it to the audio callback; it's the read side of
@@ -246,7 +325,7 @@ impl Engine {
         self.publish.clone()
     }
 
-    pub fn project(&self) -> &Project {
+    pub fn project(&self) -> &ProjectData {
         &self.current
     }
 
@@ -261,10 +340,10 @@ impl Engine {
         id
     }
 
-    pub fn apply(&mut self, cmd: Command) -> Result<(), EngineError> {
+    pub fn apply(&mut self, cmd: Command) -> Result<()> {
         let mut next = (*self.current).clone();
         println!("{cmd}");
-        apply_command(&mut next, cmd)?;
+        self.apply_command(&mut next, cmd)?;
         self.commit(next);
         Ok(())
     }
@@ -285,7 +364,7 @@ impl Engine {
         }
     }
 
-    fn commit(&mut self, next: Project) {
+    fn commit(&mut self, next: ProjectData) {
         self.undo_stack
             .push(std::mem::replace(&mut self.current, Arc::new(next)));
         self.redo_stack.clear();
@@ -302,25 +381,97 @@ impl Engine {
             schedule: Arc::new(schedule),
         }));
     }
-}
 
-fn apply_command(project: &mut Project, cmd: Command) -> Result<(), EngineError> {
-    match cmd {
-        Command::AddTrack { name, kind } => project.add_track(name, kind),
+    fn apply_command(&self, project: &mut ProjectData, cmd: Command) -> Result<()> {
+        match cmd {
+            Command::AddTrack { name, kind } => project.add_track(name, kind),
 
-        Command::RemoveTrack(track_id) => project.remove_track(track_id),
-        Command::AddClip {
-            track,
-            start,
-            end: length,
-            asset,
-        } => project.add_clip_to_track(track, start, length, asset),
-        Command::MoveClip {
-            track,
-            clip,
-            new_start,
-        } => project.move_clip(track, clip, new_start),
-        Command::AddLink { from, to } => project.add_link(from, to),
-        Command::RemoveLink { from, to } => project.remove_link(from, to),
+            Command::RemoveTrack(track_id) => project.remove_track(track_id),
+            Command::AddClip {
+                track,
+                start,
+                end: length,
+                asset,
+            } => project.add_clip_to_track(track, start, length, asset),
+            Command::MoveClip {
+                track,
+                clip,
+                new_start,
+            } => project.move_clip(track, clip, new_start),
+            Command::AddLink { from, to } => project.add_link(from, to),
+            Command::RemoveLink { from, to } => project.remove_link(from, to),
+            Command::Play => self.play(),
+        }
+    }
+
+    fn play(&self) -> Result<()> {
+        use cpal::traits::StreamTrait;
+        // --- 3. Hand the audio thread its read handle -----------------------
+        let render_state: Arc<ArcSwap<RenderState>> = self.render_state_handle();
+        // let playhead = Arc::new(AtomicU64::new(0));
+
+        let stream = match self.config.sample_format {
+            SampleFormat::F32 => self.build_stream::<f32>(render_state)?,
+            other => anyhow::bail!(
+                "device wants sample format {other:?}; only f32 output is wired up in this skeleton \
+             (TODO: convert via cpal::Sample for I16/U16 devices)"
+            ),
+        };
+        dbg!();
+        println!("Press enter to play");
+        let mut buf = String::new();
+        std::io::stdin().read_line(&mut buf)?;
+        // Stream has to stay alive for audio to keep playing -- this local
+        // binding, held until the end of main(), is what does that.
+        stream.play()?;
+
+        println!("Playing... press enter to quit");
+        let mut buf = String::new();
+        std::io::stdin().read_line(&mut buf)?;
+        Ok(())
+    }
+
+    /// Generic over the sample type cpal actually wants; only instantiated
+    /// for f32 today (see the SampleFormat match above), but written this way
+    /// so adding I16/U16 conversion later is a second match arm, not a rewrite.
+    fn build_stream<T>(&self, render_state: Arc<ArcSwap<RenderState>>) -> Result<cpal::Stream>
+    where
+        T: cpal::SizedSample + cpal::FromSample<f32>,
+    {
+        use cpal::traits::DeviceTrait;
+
+        let mut pool = BufferPool::new();
+        let device_clone = self.config.device.clone();
+        let config = self.config.config;
+        let playhead = self.playhead.clone();
+        let stream = device_clone.build_output_stream(
+            config,
+            move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
+                let frame_count = data.len() / config.channels as usize;
+                let start =
+                    playhead.fetch_add(frame_count as u64, std::sync::atomic::Ordering::Relaxed);
+
+                // The entire real-time path: load the current published state
+                // (lock-free), run the compiled schedule, copy the result out
+                // converting f32 -> whatever cpal wants.
+                let state = render_state.load();
+                let mixed = execute_block(
+                    &state.schedule,
+                    &state.project,
+                    tick::Tick(start),
+                    frame_count,
+                    config.channels,
+                    &mut pool,
+                );
+
+                for (dst, &src) in data.iter_mut().zip(mixed) {
+                    *dst = T::from_sample(src);
+                }
+            },
+            move |err| eprintln!("audio stream error: {err}"),
+            None,
+        )?;
+
+        Ok(stream)
     }
 }
