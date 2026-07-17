@@ -104,6 +104,7 @@ mod tests {
              (TODO: convert via cpal::Sample for I16/U16 devices)"
             ),
         };
+        dbg!();
         println!("Press enter to play");
         let mut buf = String::new();
         std::io::stdin().read_line(&mut buf)?;

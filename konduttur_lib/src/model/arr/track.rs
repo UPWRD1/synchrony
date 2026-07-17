@@ -4,12 +4,7 @@ use slotmap::new_key_type;
 
 use crate::{
     engine::tick::Tick,
-    model::{
-        DataKind,
-        arr::clip::{ClipData, ClipID},
-        flow::NodeID,
-        project::Project,
-    },
+    model::{DataKind, Renderable, arr::clip::ClipID, flow::NodeID, project::Project},
 };
 
 new_key_type! {
@@ -25,14 +20,8 @@ pub struct Track {
     pub linked_node_id: OnceLock<NodeID>,
 }
 
-impl Track {
-    pub fn render_into_buf(
-        &self,
-        proj: &Project,
-        buf: &mut [f32],
-        block_start: Tick,
-        channels: u16,
-    ) {
+impl Renderable for Track {
+    fn render(&self, proj: &Project, buf: &mut [f32], block_start: Tick, channels: u16) {
         // Deinterleave
         let block_len: Tick = (buf.len() / channels as usize).into();
         let block_end = block_start + block_len;
@@ -55,32 +44,7 @@ impl Track {
             let Some(clip) = proj.clips.get(clip_id) else {
                 panic!("Invalid clip");
             };
-            let ClipData::Audio(audio) = &clip.data else {
-                panic!("Non-audio clip")
-            };
-            let Some(asset) = proj.assets.get(*audio) else {
-                panic!("invalid asset");
-            };
-
-            let clip_end = clip.start + clip.length;
-            let overlap_start = block_start.max(clip.start);
-            let overlap_end = block_end.min(clip_end);
-            if overlap_start >= overlap_end {
-                continue;
-            }
-            for frame in (overlap_start.0)..overlap_end.0 {
-                let src_idx = ((frame - clip.start.0) as usize) * asset.channels as usize;
-                let dst_idx = ((frame - block_start.0) as usize) * channels as usize;
-                for ch in 0..channels as usize {
-                    let src_ch = ch.min(asset.channels as usize - 1);
-                    if let (Some(&sample), Some(dest)) = (
-                        asset.samples.get(src_idx + src_ch),
-                        buf.get_mut(dst_idx + ch),
-                    ) {
-                        *dest += sample * asset.gain * self.gain;
-                    }
-                }
-            }
+            clip.render(proj, buf, block_start, channels)
         }
     }
 }

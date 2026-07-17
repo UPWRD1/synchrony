@@ -40,3 +40,9 @@ impl Project {
         }
     }
 }
+
+impl Default for Project {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -2,18 +2,19 @@
 //! streaming/paging would only change this function's internals.
 
 use anyhow::Result;
-use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::{fs::File, time::Duration};
 
 use crate::model::asset::Asset;
-use symphonia::core::audio::sample::Sample;
-use symphonia::core::codecs::audio::AudioDecoderOptions;
-use symphonia::core::errors::Error;
-use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, TrackType};
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
+use symphonia::core::{
+    audio::sample::Sample,
+    codecs::audio::AudioDecoderOptions,
+    errors::Error,
+    formats::{FormatOptions, FormatReader, TrackType, probe::Hint},
+    io::MediaSourceStream,
+    meta::MetadataOptions,
+};
 
 pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> Result<Asset> {
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
@@ -25,7 +26,7 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
 
     // Create a hint to help the format registry guess what format reader is appropriate. In this
     // example we'll leave it empty.
-    let mut hint = Hint::new();
+    let hint = Hint::new();
 
     // Use the default options when reading and decoding.
     let fmt_opts: FormatOptions = Default::default();
@@ -51,8 +52,9 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;
 
-    let mut channels = 2u16;
-    let mut samples: Vec<f32> = Default::default();
+    let mut channels = 1u16;
+    let mut scratch: Vec<f32> = vec![];
+    let mut samples: Vec<f32> = vec![]; // Vec::with_capacity(channels as usize * expected_sample_rate as usize * 2);
     let mut total_sample_count = 0;
 
     // Read and decode all packets from the format reader.
@@ -74,14 +76,16 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
                 // the f32 sample format in channel interleaved order.
 
                 // Ensure the vector is large enough to hold all the samples.
-                samples.resize(audio_buf.samples_interleaved(), f32::MID);
+                scratch.resize(audio_buf.samples_interleaved(), f32::MID);
+                dbg!(&scratch.len());
 
                 // Copy the audio samples from the generic audio buffer to the vector in interleaved
                 // order. The sample format to convert to is inferred from the type of the Vec.
-                audio_buf.copy_to_slice_interleaved(&mut samples);
 
+                audio_buf.copy_to_slice_interleaved(&mut scratch);
+                samples.append(&mut scratch);
                 // Sum up the total number of samples.
-                total_sample_count += samples.len();
+                total_sample_count += scratch.len();
                 print!("\rDecoded {total_sample_count} samples");
             }
             Err(Error::DecodeError(_)) => (),

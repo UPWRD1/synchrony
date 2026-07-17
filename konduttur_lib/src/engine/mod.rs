@@ -6,6 +6,7 @@ pub mod assetserver;
 pub mod tick;
 
 use crate::engine::tick::Tick;
+use crate::model::Renderable;
 use crate::model::{
     DataKind,
     arr::{
@@ -225,7 +226,7 @@ fn process_node(
     match payload {
         NodePayload::TrackReader(track_id) => {
             if let Some(track) = project.tracks.get(*track_id) {
-                track.render_into_buf(project, &mut outputs[0], block_start, channels);
+                track.render(project, &mut outputs[0], block_start, channels);
             }
         }
         NodePayload::Native(NativeNodeType::Master) => {
@@ -257,7 +258,10 @@ pub enum Command {
         from: (NodeID, SocketIndex),
         to: (NodeID, SocketIndex),
     },
-    RemoveLink(NodeID, SocketIndex, NodeID, SocketIndex),
+    RemoveLink {
+        from: (NodeID, SocketIndex),
+        to: (NodeID, SocketIndex),
+    },
 }
 
 impl std::fmt::Display for Command {
@@ -282,7 +286,7 @@ impl std::fmt::Display for Command {
                 new_start,
             } => todo!(),
             Command::AddLink { from, to } => todo!(),
-            Command::RemoveLink(node_id, _, node_id1, _) => todo!(),
+            Command::RemoveLink { from, to } => todo!(),
         }
     }
 }
@@ -398,21 +402,19 @@ fn apply_command(project: &mut Project, cmd: Command) -> Result<(), EngineError>
             new_start,
         } => move_clip(project, track, clip, new_start),
         Command::AddLink { from, to } => add_link(project, from, to),
-        Command::RemoveLink(fn_, fs, tn, ts) => remove_link(project, fn_, fs, tn, ts),
+        Command::RemoveLink { from, to } => remove_link(project, from, to),
     }
 }
 
 fn remove_link(
     project: &mut Project,
-    fn_: NodeID,
-    fs: u16,
-    tn: NodeID,
-    ts: u16,
+    from: (NodeID, u16),
+    to: (NodeID, u16),
 ) -> Result<(), EngineError> {
     project
         .graph
         .links
-        .retain(|_, l| !(l.from == (fn_, fs) && l.to == (tn, ts)));
+        .retain(|_, l| !(l.from == from && l.to == to));
     Ok(())
 }
 
