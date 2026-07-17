@@ -51,87 +51,6 @@ impl std::fmt::Display for EngineError {
     }
 }
 
-/// Kahn's algorithm topological sort + a bump-allocated buffer slot per
-/// output socket. No slot reuse yet (see the buffer-pooling discussion —
-/// this is the register-allocation pass that'd go here later); today's
-/// graphs are tiny so it doesn't matter yet.
-/// Kahn's algorithm, shared by compile_graph (which needs the order) and
-/// link validation (which only needs to know whether an order exists).
-fn topo_sort(graph: &NodeGraph) -> Result<Vec<NodeID>, EngineError> {
-    let mut in_degree: HashMap<NodeID, usize> = graph.nodes.keys().map(|id| (id, 0)).collect();
-    for link in graph.links.values() {
-        *in_degree
-            .get_mut(&link.to.0)
-            .ok_or(EngineError::NodeNotFound(link.to.0))? += 1;
-    }
-
-    let mut remaining = in_degree.clone();
-    let mut queue: VecDeque<NodeID> = in_degree
-        .iter()
-        .filter(|(_, d)| **d == 0)
-        .map(|(&id, _)| id)
-        .collect();
-    let mut order = Vec::with_capacity(graph.nodes.len());
-
-    while let Some(n) = queue.pop_front() {
-        order.push(n);
-        for link in graph.links.values().filter(|l| l.from.0 == n) {
-            let d = remaining.get_mut(&link.to.0).unwrap();
-            *d -= 1;
-            if *d == 0 {
-                queue.push_back(link.to.0);
-            }
-        }
-    }
-    if order.len() != graph.nodes.len() {
-        return Err(EngineError::WouldCreateCycle);
-    }
-    Ok(order)
-}
-
-pub fn compile_graph(graph: &NodeGraph, master_node: NodeID) -> Result<CompiledGraph, EngineError> {
-    let order = topo_sort(graph)?;
-
-    let mut output_slot: HashMap<(NodeID, SocketIndex), usize> = HashMap::new();
-    let mut buffer_count = 0usize;
-    for &node_id in &order {
-        let node = &graph.nodes[node_id];
-        for i in 0..node.outputs.len() {
-            output_slot.insert((node_id, i as SocketIndex), buffer_count);
-            buffer_count += 1;
-        }
-    }
-
-    let mut steps = Vec::with_capacity(order.len());
-    for &node_id in &order {
-        let node = &graph.nodes[node_id];
-        let mut input_sources = vec![Vec::new(); node.inputs.len()];
-        for link in graph.links.values().filter(|l| l.to.0 == node_id) {
-            if let Some(&slot) = output_slot.get(&link.from) {
-                input_sources[link.to.1 as usize].push(slot);
-            }
-        }
-        let output_slots = (0..node.outputs.len())
-            .map(|i| output_slot[&(node_id, i as SocketIndex)])
-            .collect();
-        steps.push(ScheduleStep {
-            node: node_id,
-            input_sources,
-            output_slots,
-        });
-    }
-
-    let master_output_slot = *output_slot
-        .get(&(master_node, 0))
-        .ok_or(EngineError::NodeNotFound(master_node))?;
-
-    Ok(CompiledGraph {
-        steps,
-        buffer_count,
-        master_output_slot,
-    })
-}
-
 // ---------------------------------------------------------------------
 // Execution — runs once per audio callback
 // ---------------------------------------------------------------------
@@ -309,7 +228,8 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(project: Arc<Project>) -> Self {
-        let schedule = compile_graph(&project.graph, project.master_node_id)
+        let schedule = project
+            .compile_graph()
             .expect("fresh project graph is always acyclic");
 
         let publish = Arc::new(ArcSwap::from_pointee(RenderState {
@@ -377,7 +297,9 @@ impl Engine {
     }
 
     fn publish_current(&mut self) {
-        let schedule = compile_graph(&self.current.graph, self.current.master_node_id)
+        let schedule = self
+            .current
+            .compile_graph()
             .expect("command validation should prevent cycles before this point");
         self.publish.store(Arc::new(RenderState {
             project: self.current.clone(),
@@ -388,156 +310,21 @@ impl Engine {
 
 fn apply_command(project: &mut Project, cmd: Command) -> Result<(), EngineError> {
     match cmd {
-        Command::AddTrack { name, kind } => add_track(project, name, kind),
-        Command::RemoveTrack(track_id) => remove_track(project, track_id),
+        Command::AddTrack { name, kind } => project.add_track(name, kind),
+
+        Command::RemoveTrack(track_id) => project.remove_track(track_id),
         Command::AddClip {
             track,
             start,
             end: length,
             asset,
-        } => add_clip_to_track(project, track, start, length, asset),
+        } => project.add_clip_to_track(track, start, length, asset),
         Command::MoveClip {
             track,
             clip,
             new_start,
-        } => move_clip(project, track, clip, new_start),
-        Command::AddLink { from, to } => add_link(project, from, to),
-        Command::RemoveLink { from, to } => remove_link(project, from, to),
+        } => project.move_clip(track, clip, new_start),
+        Command::AddLink { from, to } => project.add_link(from, to),
+        Command::RemoveLink { from, to } => project.remove_link(from, to),
     }
-}
-
-fn remove_link(
-    project: &mut Project,
-    from: (NodeID, u16),
-    to: (NodeID, u16),
-) -> Result<(), EngineError> {
-    project
-        .graph
-        .links
-        .retain(|_, l| !(l.from == from && l.to == to));
-    Ok(())
-}
-
-fn add_link(
-    project: &mut Project,
-    from: (NodeID, u16),
-    to: (NodeID, u16),
-) -> Result<(), EngineError> {
-    let from_kind = socket_kind_of(&project.graph, from, true)?;
-    let to_kind = socket_kind_of(&project.graph, to, false)?;
-    if !from_kind.can_connect_to(to_kind) {
-        return Err(EngineError::IncompatibleSockets {
-            from: from_kind,
-            to: to_kind,
-        });
-    }
-    project.graph.links.insert(Link { from, to });
-    if topo_sort(&project.graph).is_err() {
-        project
-            .graph
-            .links
-            .retain(|_, l| !(l.from == from && l.to == to));
-        return Err(EngineError::WouldCreateCycle);
-    }
-    Ok(())
-}
-
-fn move_clip(
-    project: &mut Project,
-    track: TrackID,
-    clip: ClipID,
-    new_start: Tick,
-) -> Result<(), EngineError> {
-    let track = project
-        .tracks
-        .get_mut(track)
-        .ok_or(EngineError::TrackNotFound(track))?;
-    track.clips.retain(|_, &mut id| id != clip);
-    track.clips.insert(new_start, clip);
-    if let Some(c) = project.clips.get_mut(clip) {
-        c.start = new_start;
-    }
-    Ok(())
-}
-
-fn add_clip_to_track(
-    project: &mut Project,
-    track: TrackID,
-    start: Tick,
-    length: Tick,
-    asset: AssetID,
-) -> Result<(), EngineError> {
-    let clip_id = project.clips.insert(Clip {
-        start,
-        length,
-        data: ClipData::Audio(asset),
-    });
-    let track = project
-        .tracks
-        .get_mut(track)
-        .ok_or(EngineError::TrackNotFound(track))?;
-    track.clips.insert(start, clip_id);
-    Ok(())
-}
-
-fn remove_track(project: &mut Project, track_id: TrackID) -> Result<(), EngineError> {
-    let track = project
-        .tracks
-        .remove(track_id)
-        .ok_or(EngineError::TrackNotFound(track_id))?;
-    let linked_id = track.linked_node_id.expect("Track was orphaned from node");
-    project.graph.nodes.remove(linked_id);
-    project
-        .graph
-        .links
-        .retain(|_, l| l.from.0 != linked_id && l.to.0 != linked_id);
-    for clip_id in track.clips.values() {
-        project.clips.remove(*clip_id);
-    }
-    Ok(())
-}
-
-fn add_track(project: &mut Project, name: String, kind: DataKind) -> Result<(), EngineError> {
-    let track_id = project.tracks.insert(Track {
-        name,
-        kind,
-        gain: 1.0,
-        linked_node_id: None,
-        clips: Default::default(),
-    });
-    let node = Node::new(
-        vec![],
-        vec![Socket::new(kind, "out", true)],
-        NodePayload::TrackReader(track_id),
-    );
-    let node_id = project.graph.nodes.insert(node);
-    project.tracks[track_id].linked_node_id = Some(node_id);
-
-    // Convenience default: new tracks route straight to master.
-    // Same AddLink path a user rewiring Flow view would go through.
-    let master = project.master_node_id;
-    project.graph.links.insert(Link {
-        from: (node_id, 0),
-        to: (master, 0),
-    });
-    Ok(())
-}
-
-fn socket_kind_of(
-    graph: &NodeGraph,
-    endpoint: (NodeID, SocketIndex),
-    is_output: bool,
-) -> Result<DataKind, EngineError> {
-    let node = graph
-        .nodes
-        .get(endpoint.0)
-        .ok_or(EngineError::NodeNotFound(endpoint.0))?;
-    let list = if is_output {
-        &node.outputs
-    } else {
-        &node.inputs
-    };
-    list.get(endpoint.1 as usize)
-        .map(|s| s.kind)
-        .ok_or(EngineError::NodeNotFound(endpoint.0))
 }
