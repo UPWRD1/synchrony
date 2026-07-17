@@ -1,5 +1,4 @@
 use arc_swap::ArcSwap;
-use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use thiserror::Error;
 pub mod assetserver;
@@ -9,12 +8,9 @@ use crate::engine::tick::Tick;
 use crate::model::Renderable;
 use crate::model::{
     DataKind,
-    arr::{
-        clip::{Clip, ClipData, ClipID},
-        track::{Track, TrackID},
-    },
+    arr::{clip::ClipID, track::TrackID},
     asset::{Asset, AssetID},
-    flow::{Link, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex},
+    flow::{NativeNodeType, NodeID, NodePayload, SocketIndex},
     project::Project,
 };
 
@@ -187,7 +183,7 @@ impl std::fmt::Display for Command {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Command::AddTrack { name, kind } => write!(f, "Added {kind:?} track \"{name}\""),
-            Command::RemoveTrack(track_id) => todo!(),
+            Command::RemoveTrack(track_id) => write!(f, "Removed track \"{track_id:?}\""),
             Command::AddClip {
                 track,
                 start,
