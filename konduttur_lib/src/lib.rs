@@ -80,14 +80,14 @@ mod tests {
         engine.apply(Command::AddClip {
             track: clap_track,
             start: engine::tick::Tick(0),
-            length: engine::tick::Tick(clap_len),
+            end: engine::tick::Tick(clap_len),
             asset: clap_asset,
         })?;
         // Starts right where the kick clip ends -- sequenced across two tracks.
         engine.apply(Command::AddClip {
             track: snap_track,
-            start: engine::tick::Tick(1000),
-            length: engine::tick::Tick(snap_len),
+            start: engine::tick::Tick(clap_len),
+            end: engine::tick::Tick(snap_len),
             asset: snap_asset,
         })?;
 

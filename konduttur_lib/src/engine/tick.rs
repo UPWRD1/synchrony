@@ -1,6 +1,8 @@
 //! Module for the `Tick` primitive.
+
+use serde::{Deserialize, Serialize};
 /// Atomic unit of time within the engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Tick(pub u64);
 
 impl From<u64> for Tick {

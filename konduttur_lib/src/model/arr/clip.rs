@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
 use crate::{
@@ -9,14 +10,14 @@ new_key_type! {
     pub struct ClipID;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Clip {
     pub start: Tick,
     pub length: Tick,
     pub data: ClipData,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum ClipData {
     Audio(AssetID),
     Midi,

@@ -1,5 +1,6 @@
 use std::{collections::BTreeMap, sync::OnceLock};
 
+use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
 use crate::{
@@ -11,13 +12,13 @@ new_key_type! {
    pub struct TrackID;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Track {
     pub name: String,
     pub clips: BTreeMap<Tick, ClipID>,
     pub gain: f32,
     pub kind: DataKind,
-    pub linked_node_id: OnceLock<NodeID>,
+    pub linked_node_id: Option<NodeID>,
 }
 
 impl Renderable for Track {

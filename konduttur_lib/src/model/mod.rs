@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::{engine::tick::Tick, model::project::Project};
 
 pub mod arr;
@@ -5,7 +7,7 @@ pub mod asset;
 pub mod flow;
 pub mod project;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DataKind {
     Audio,
     Midi,

@@ -1,6 +1,6 @@
 use arc_swap::ArcSwap;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use thiserror::Error;
 pub mod assetserver;
 pub mod tick;
@@ -246,7 +246,7 @@ pub enum Command {
     AddClip {
         track: TrackID,
         start: Tick,
-        length: Tick,
+        end: Tick,
         asset: AssetID,
     },
     MoveClip {
@@ -272,12 +272,12 @@ impl std::fmt::Display for Command {
             Command::AddClip {
                 track,
                 start,
-                length,
+                end,
                 asset,
             } => {
                 write!(
                     f,
-                    "Added clip {asset:?} to {track:?} at {start:?} for {length:?} ticks"
+                    "Added clip {asset:?} to {track:?} at {start:?} until {end:?} ticks"
                 )
             }
             Command::MoveClip {
@@ -393,7 +393,7 @@ fn apply_command(project: &mut Project, cmd: Command) -> Result<(), EngineError>
         Command::AddClip {
             track,
             start,
-            length,
+            end: length,
             asset,
         } => add_clip_to_track(project, track, start, length, asset),
         Command::MoveClip {
@@ -485,7 +485,7 @@ fn remove_track(project: &mut Project, track_id: TrackID) -> Result<(), EngineEr
         .tracks
         .remove(track_id)
         .ok_or(EngineError::TrackNotFound(track_id))?;
-    let linked_id = *track.linked_node_id.get().unwrap();
+    let linked_id = track.linked_node_id.expect("Track was orphaned from node");
     project.graph.nodes.remove(linked_id);
     project
         .graph
@@ -502,7 +502,7 @@ fn add_track(project: &mut Project, name: String, kind: DataKind) -> Result<(), 
         name,
         kind,
         gain: 1.0,
-        linked_node_id: OnceLock::new(),
+        linked_node_id: None,
         clips: Default::default(),
     });
     let node = Node::new(
@@ -511,10 +511,8 @@ fn add_track(project: &mut Project, name: String, kind: DataKind) -> Result<(), 
         NodePayload::TrackReader(track_id),
     );
     let node_id = project.graph.nodes.insert(node);
-    project.tracks[track_id]
-        .linked_node_id
-        .set(node_id)
-        .expect("Track should not already have a linked NodeID");
+    project.tracks[track_id].linked_node_id = Some(node_id);
+
     // Convenience default: new tracks route straight to master.
     // Same AddLink path a user rewiring Flow view would go through.
     let master = project.master_node_id;

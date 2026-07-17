@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use crate::model::{
     DataKind,
     arr::{
@@ -9,10 +7,10 @@ use crate::model::{
     asset::{Asset, AssetID},
     flow::{NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket},
 };
-
+use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub tracks: SlotMap<TrackID, Track>,
     pub clips: SlotMap<ClipID, Clip>,

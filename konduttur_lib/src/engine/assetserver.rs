@@ -2,24 +2,25 @@
 //! streaming/paging would only change this function's internals.
 
 use anyhow::Result;
+use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::{fs::File, time::Duration};
 
 use crate::model::asset::Asset;
 use symphonia::core::{
     audio::sample::Sample,
     codecs::audio::AudioDecoderOptions,
     errors::Error,
-    formats::{FormatOptions, FormatReader, TrackType, probe::Hint},
+    formats::{FormatOptions, TrackType, probe::Hint},
     io::MediaSourceStream,
     meta::MetadataOptions,
 };
 
 pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> Result<Asset> {
+    let path = path.into();
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.
-    let file = Box::new(File::open(path.into()).unwrap());
+    let file = Box::new(File::open(&path).unwrap());
 
     // Create the media source stream using the boxed media source from above.
     let mss = MediaSourceStream::new(file, Default::default());
@@ -52,7 +53,11 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;
 
-    let mut channels = 1u16;
+    let channels = decoder
+        .codec_params()
+        .channels
+        .as_ref()
+        .map_or_else(|| 1u16, |c| c.count() as u16);
     let mut scratch: Vec<f32> = vec![];
     let mut samples: Vec<f32> = vec![]; // Vec::with_capacity(channels as usize * expected_sample_rate as usize * 2);
     let mut total_sample_count = 0;
@@ -77,11 +82,9 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
 
                 // Ensure the vector is large enough to hold all the samples.
                 scratch.resize(audio_buf.samples_interleaved(), f32::MID);
-                dbg!(&scratch.len());
 
                 // Copy the audio samples from the generic audio buffer to the vector in interleaved
                 // order. The sample format to convert to is inferred from the type of the Vec.
-
                 audio_buf.copy_to_slice_interleaved(&mut scratch);
                 samples.append(&mut scratch);
                 // Sum up the total number of samples.
@@ -96,5 +99,6 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> 
         samples: Arc::new(samples),
         channels,
         gain: 20.0,
+        path,
     })
 }
