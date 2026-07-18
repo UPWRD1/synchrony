@@ -24,11 +24,21 @@ use crate::model::{
 // ---------------------------------------------------------------------
 pub type SlotIndex = usize;
 
+#[derive(Debug, Clone)]
+pub struct SummingCommand {
+    /// The target scratch slot where the summed audio will be collected
+    pub target_scratch_slot: SlotIndex,
+    /// All the source slots that need to be blended together into the scratch slot
+    pub source_slots: Vec<SlotIndex>,
+}
+
 pub struct ScheduleStep {
-    pub node: NodeID,
+    pub node_id: NodeID,
+    /// Pre-compiled instructions telling the engine what to sum before running the node
+    pub prep_sums: Vec<SummingCommand>,
     /// One entry per input socket; each entry lists every buffer slot
     /// feeding it (0 = unconnected, 1 = normal, 2+ = fan-in summed).
-    pub input_sources: Vec<Vec<SlotIndex>>,
+    pub input_slots: Vec<SlotIndex>,
     /// One entry per output socket.
     pub output_slots: Vec<SlotIndex>,
 }
@@ -56,34 +66,6 @@ impl std::fmt::Display for EngineError {
 // ---------------------------------------------------------------------
 // Execution — runs once per audio callback
 // ---------------------------------------------------------------------
-
-/// Scratch memory reused across callbacks. Currently reallocates its inner
-/// per-node Vecs each block (see process_node's `Vec::new()` scratch) —
-/// flagged as the real-time-safety TODO it is; fine for a skeleton, not
-/// for production. Real version preallocates every scratch slot exactly
-/// once, sized when the schedule is published.
-pub struct BufferPool {
-    buffers: Vec<Vec<f32>>,
-}
-
-impl BufferPool {
-    pub fn new() -> Self {
-        Self {
-            buffers: Vec::new(),
-        }
-    }
-
-    fn ensure(&mut self, buffer_count: usize, frame_capacity: usize) {
-        if self.buffers.len() != buffer_count {
-            self.buffers = vec![vec![0.0; frame_capacity]; buffer_count];
-        }
-        for buf in &mut self.buffers {
-            if buf.len() < frame_capacity {
-                buf.resize(frame_capacity, 0.0);
-            }
-        }
-    }
-}
 
 pub struct BlockBufferPool {
     /// Contiguous pre-allocated block: (buffer_count * block_size)
@@ -128,7 +110,7 @@ impl PoolExecutor {
     /// Get a read-only view of a slot.
     /// Safety: Assumes no other code is actively writing to this slot right now.
     #[inline]
-    pub fn get_input(&self, slot: SlotIndex) -> &[f32] {
+    pub fn get_input<'a>(&self, slot: SlotIndex) -> &'a [f32] {
         unsafe {
             let offset = slot * self.block_size;
             debug_assert!(offset + self.block_size <= self.total_len);
@@ -139,7 +121,7 @@ impl PoolExecutor {
     /// Get a mutable view of a slot.
     /// Safety: Assumes no other code is actively reading or writing to this slot right now.
     #[inline]
-    pub fn get_output(&mut self, slot: SlotIndex) -> &mut [f32] {
+    pub fn get_output<'a>(&mut self, slot: SlotIndex) -> &'a mut [f32] {
         unsafe {
             let offset = slot * self.block_size;
             debug_assert!(offset + self.block_size <= self.total_len);
@@ -147,7 +129,6 @@ impl PoolExecutor {
         }
     }
 }
-
 /// Runs the compiled schedule for one block and returns the master mix.
 pub fn execute_block<'a>(
     schedule: &CompiledGraph,
@@ -155,51 +136,53 @@ pub fn execute_block<'a>(
     block_start: Tick,
     frame_count: usize,
     channels: u16,
-    pool: &'a mut BufferPool,
+    pool: &'a mut BlockBufferPool,
 ) -> &'a [f32] {
     // assert_no_alloc(|| {
     let sample_count = frame_count * channels as usize;
-    pool.ensure(schedule.buffer_count, sample_count);
+    // pool.ensure(schedule.buffer_count, sample_count);
 
-    for step in &schedule.steps {
-        // Gather + sum inputs (audio/CV fan-in) into owned scratch first,
-        // so we never hold an immutable borrow of pool.buffers while also
-        // writing this node's outputs into it below.
-        let mut inputs: Vec<Vec<f32>> = Vec::with_capacity(step.input_sources.len());
-        for sources in &step.input_sources {
-            let mut acc = vec![0.0f32; sample_count];
-            for &slot in sources {
-                for (a, b) in acc.iter_mut().zip(&pool.buffers[slot][..sample_count]) {
-                    *a += b;
+    // Wipe layout elements: Completely clean block with zero allocation overhead
+    pool.clear();
+    let mut executor = pool.executor();
+
+    for i in 0..schedule.steps.len() {
+        let step = &schedule.steps[i];
+        let node = &project.graph.nodes[step.node_id];
+
+        // 1. Process engine-level fan-in matrix configurations
+        for sum_cmd in &step.prep_sums {
+            unsafe {
+                let target = executor.get_output(sum_cmd.target_scratch_slot);
+
+                for &source_slot in &sum_cmd.source_slots {
+                    let source = executor.get_input(source_slot);
+
+                    // Simple additive loop: easily optimized by hardware auto-vectorization
+                    for sample_idx in 0..pool.block_size {
+                        target[sample_idx] += source[sample_idx];
+                    }
                 }
             }
-            inputs.push(acc);
         }
-        let v = &inputs.get(0).map_or_else(|| 0, |f| f.len());
-        dbg!(v);
 
-        let mut outputs: Vec<Vec<f32>> = step
-            .output_slots
-            .iter()
-            .map(|_| vec![0.0f32; sample_count])
-            .collect();
-
-        let node = &project.graph.nodes[step.node];
+        // 2. Call the node's internal process method with pure 1-to-1 socket bindings
+       ;
+        let node = &project.graph.nodes[step.node_id];
         process_node(
             &node.payload,
             project,
             block_start,
             channels,
-            &inputs,
-            &mut outputs,
+            &step.input_slots,
+            &step.output_slots,
+            &mut executor,
         );
-
-        for (&slot, buf) in step.output_slots.iter().zip(outputs) {
-            pool.buffers[slot][..sample_count].copy_from_slice(&buf);
-        }
     }
 
-    &pool.buffers[schedule.master_output_slot][..sample_count]
+    // 3. Extract output safely
+    executor.get_input(schedule.master_output_slot)
+
     // })
 }
 
@@ -208,17 +191,22 @@ fn process_node(
     project: &ProjectData,
     block_start: Tick,
     channels: u16,
-    inputs: &[Vec<f32>],
-    outputs: &mut [Vec<f32>],
+    inputs: &[SlotIndex],
+    outputs: &[SlotIndex],
+    pool: &mut PoolExecutor,
 ) {
     match payload {
         NodePayload::TrackReader(track_id) => {
             if let Some(track) = project.tracks.get(*track_id) {
-                track.render(project, &mut outputs[0], block_start, channels);
+                let output_buf = pool.get_output(outputs[0]);
+                track.render(project, output_buf, block_start, channels);
             }
         }
         NodePayload::Native(NativeNodeType::Master) => {
-            outputs[0].copy_from_slice(&inputs[0]);
+            let input_buf = pool.get_input(inputs[0]);
+            let output_buf = pool.get_output(outputs[0]);
+
+            output_buf.copy_from_slice(&input_buf);
         }
         NodePayload::Native(_other) => unimplemented!("native node type not wired up yet"),
         NodePayload::Group(_) => unimplemented!("group inlining not implemented yet"),
@@ -440,10 +428,11 @@ impl Engine {
     {
         use cpal::traits::DeviceTrait;
 
-        let mut pool = BufferPool::new();
         let device_clone = self.config.device.clone();
         let config = self.config.config;
         let playhead = self.playhead.clone();
+        let state = render_state.load();
+        let mut pool = BlockBufferPool::new(state.schedule.buffer_count, 1024);
         let stream = device_clone.build_output_stream(
             config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
@@ -454,7 +443,6 @@ impl Engine {
                 // The entire real-time path: load the current published state
                 // (lock-free), run the compiled schedule, copy the result out
                 // converting f32 -> whatever cpal wants.
-                let state = render_state.load();
                 let mixed = execute_block(
                     &state.schedule,
                     &state.project,

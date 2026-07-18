@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::{
-    engine::{CompiledGraph, EngineError, ScheduleStep, tick::Tick},
+    engine::{CompiledGraph, EngineError, ScheduleStep, SlotIndex, SummingCommand, tick::Tick},
     model::{
         DataKind,
         arr::{
@@ -216,8 +216,13 @@ impl ProjectData {
     pub fn compile_graph(&self) -> Result<CompiledGraph> {
         let order = self.topo_sort()?;
 
-        let mut output_slot: HashMap<(NodeID, SocketIndex), usize> = HashMap::new();
-        let mut buffer_count = 0usize;
+        // Tracks output socket -> physical layout buffer slot mapping
+        let mut output_slot: HashMap<(NodeID, SocketIndex), SlotIndex> = HashMap::new();
+
+        // Slot 0 is permanently reserved for Silence/Unconnected states.
+        // Node outputs start assigning from Slot index 1.
+        let mut buffer_count = 1usize;
+
         for &node_id in &order {
             let node = &self.graph.nodes[node_id];
             for i in 0..node.outputs.len() {
@@ -227,20 +232,56 @@ impl ProjectData {
         }
 
         let mut steps = Vec::with_capacity(order.len());
+
         for &node_id in &order {
             let node = &self.graph.nodes[node_id];
-            let mut input_sources = vec![Vec::new(); node.inputs.len()];
+
+            // Temporary container to collect all lines feeding each input socket
+            let mut raw_input_sources = vec![Vec::new(); node.inputs.len()];
             for link in self.graph.links.values().filter(|l| l.to.0 == node_id) {
                 if let Some(&slot) = output_slot.get(&link.from) {
-                    input_sources[link.to.1 as usize].push(slot);
+                    raw_input_sources[link.to.1 as usize].push(slot);
                 }
             }
-            let output_slots = (0..node.outputs.len())
+
+            let mut prep_sums = Vec::new();
+            let mut input_slots = Vec::with_capacity(node.inputs.len());
+
+            // Process every single input socket to calculate fan-in mapping metadata
+            for sources in raw_input_sources {
+                match sources.len() {
+                    0 => {
+                        // Unconnected: Route straight to the safe permanent Silence slot
+                        input_slots.push(0);
+                    }
+                    1 => {
+                        // Normal 1-to-1 link: Bind node straight to the source buffer slot
+                        input_slots.push(sources[0]);
+                    }
+                    _ => {
+                        // Fan-in Summing: Allocate a unique scratch buffer slot out of the pool
+                        let scratch_slot = buffer_count;
+                        buffer_count += 1;
+
+                        prep_sums.push(SummingCommand {
+                            target_scratch_slot: scratch_slot,
+                            source_slots: sources,
+                        });
+
+                        // Hand this pre-mixed scratch slot to the target node's input socket
+                        input_slots.push(scratch_slot);
+                    }
+                }
+            }
+
+            let output_slots: Vec<SlotIndex> = (0..node.outputs.len())
                 .map(|i| output_slot[&(node_id, i as SocketIndex)])
                 .collect();
+
             steps.push(ScheduleStep {
-                node: node_id,
-                input_sources,
+                node_id,
+                prep_sums,
+                input_slots,
                 output_slots,
             });
         }
@@ -251,7 +292,7 @@ impl ProjectData {
 
         Ok(CompiledGraph {
             steps,
-            buffer_count,
+            buffer_count, // Reflects the combination of outputs + required scratch spaces
             master_output_slot,
         })
     }
