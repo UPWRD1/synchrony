@@ -30,17 +30,17 @@ mod tests {
         // --- 2. Build the project through the real API, not by hand --------
         let mut engine = Engine::new(project)?;
 
-        let clap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/clap.mp3")?);
-        let snap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/snap.mp3")?);
+        let clap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/reliable.wav")?);
+        let snap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/snare.wav")?);
 
         let clap_len = {
             let asset = &engine.project().assets[clap_asset];
             asset.samples.len() as u64 / asset.channels as u64
-        };
+        } * 2;
         let snap_len = {
             let asset = &engine.project().assets[snap_asset];
             asset.samples.len() as u64 / asset.channels as u64
-        };
+        } * 2;
         let mut inc_clap_start = 0;
         let mut inc_snap_start = clap_len;
         for _ in 0..12 {
@@ -66,7 +66,7 @@ mod tests {
                 asset: snap_asset,
             })?;
             inc_clap_start += clap_len + snap_len;
-            inc_snap_start += clap_len + snap_len;
+            inc_snap_start += snap_len;
         }
 
         engine.play()?;

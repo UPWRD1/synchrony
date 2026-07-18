@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use crate::{
     engine::tick::Tick,
     model::{
@@ -14,15 +16,15 @@ pub trait Command {
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output>;
 }
 
-pub struct AddTrack {
+pub struct AddTrack<D: DataKind> {
     pub name: String,
-    pub kind: DataKind,
+    _p: PhantomData<D>,
 }
 
-impl Command for AddTrack {
+impl<D: DataKind> Command for AddTrack<D> {
     type Output = TrackID;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
-        project.add_track(self.name, self.kind)
+        project.add_track::<D>(self.name)
     }
 }
 
