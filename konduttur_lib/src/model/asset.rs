@@ -1,9 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
-use slotmap::{SlotMap, new_key_type};
-
-use crate::engine::tick::Tick;
+use slotmap::new_key_type;
 
 new_key_type! {
     pub struct AssetID;
@@ -18,31 +16,35 @@ pub struct AudioAsset {
     pub path: PathBuf,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TimelineMidiEvent {
-    pub absolute_tick: Tick,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MidiMessage {
+    /// Sample offset *within the current audio block* [0..block_size)
+    pub frame_offset: u32,
+    /// Standard 3-byte MIDI payload (Status, Data1, Data2)
     pub bytes: [u8; 3],
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MidiSequence {
-    pub events: Vec<TimelineMidiEvent>,
+pub struct MidiBufferSlot {
+    /// Bounded storage to prevent real-time dynamic vector allocations
+    pub events: [MidiMessage; 32],
+    pub count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutomationPoint {
-    pub absolute_tick: Tick,
-    pub value: f32,
-}
+impl MidiBufferSlot {
+    #[inline]
+    pub fn clear(&mut self) {
+        self.count = 0;
+    }
+    #[inline]
+    pub fn as_slice(&self) -> &[MidiMessage] {
+        &self.events[..self.count]
+    }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AutomationCurve {
-    pub points: Vec<AutomationPoint>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssetRegistry {
-    pub audio: SlotMap<AssetID, AudioAsset>,
-    pub midi: SlotMap<AssetID, MidiSequence>,
-    pub cv: SlotMap<AssetID, AutomationCurve>,
+    #[inline]
+    pub fn push(&mut self, msg: MidiMessage) {
+        if self.count < 32 {
+            self.events[self.count] = msg;
+            self.count += 1;
+        }
+    }
 }

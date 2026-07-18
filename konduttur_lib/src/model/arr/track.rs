@@ -5,10 +5,7 @@ use slotmap::new_key_type;
 
 use crate::{
     engine::tick::Tick,
-    model::{
-        AudioKind, CvKind, DataKind, MidiKind, Renderable, TypedKey, arr::clip::ClipID,
-        flow::NodeID, project::ProjectData,
-    },
+    model::{DataKind, Renderable, arr::clip::ClipID, flow::NodeID, project::ProjectData},
 };
 
 new_key_type! {
@@ -16,19 +13,15 @@ new_key_type! {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Track<D: DataKind> {
+pub struct Track {
     pub name: String,
-    pub clips: BTreeMap<Tick, TypedKey<ClipID, D>>,
+    pub clips: BTreeMap<Tick, ClipID>,
     pub gain: f32,
+    pub kind: DataKind,
     pub linked_node_id: Option<NodeID>,
 }
 
-// Convenient domain aliases
-pub type AudioTrack = Track<AudioKind>;
-pub type MidiTrack = Track<MidiKind>;
-pub type CvTrack = Track<CvKind>;
-
-impl Renderable for Track<AudioKind> {
+impl Renderable for Track {
     fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16) {
         // Deinterleave
         let block_len: Tick = (buf.len() / channels as usize).into();
