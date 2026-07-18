@@ -11,12 +11,13 @@ static A: AllocDisabler = AllocDisabler;
 mod tests {
     use super::*;
     use crate::engine::assetserver;
+    use crate::engine::{AddClip, AddTrack};
     use crate::model::project::ProjectData;
     use anyhow::Result;
 
     use std::sync::Arc;
 
-    use engine::{Command, Engine};
+    use engine::Engine;
     use model::DataKind;
     #[test]
     fn it_works() {
@@ -29,14 +30,8 @@ mod tests {
         // --- 2. Build the project through the real API, not by hand --------
         let mut engine = Engine::new(project)?;
 
-        let clap_asset = engine.load_asset(assetserver::load_audio_asset(
-            "./assets/clap.mp3",
-            engine.config.config.sample_rate,
-        )?);
-        let snap_asset = engine.load_asset(assetserver::load_audio_asset(
-            "./assets/snap.mp3",
-            engine.config.config.sample_rate,
-        )?);
+        let clap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/clap.mp3")?);
+        let snap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/snap.mp3")?);
 
         let clap_len = {
             let asset = &engine.project().assets[clap_asset];
@@ -49,27 +44,22 @@ mod tests {
         let mut inc_clap_start = 0;
         let mut inc_snap_start = clap_len;
         for _ in 0..12 {
-            engine.apply(Command::AddTrack {
-                name: "Snap".into(),
+            let clap_track = engine.apply(AddTrack {
+                name: format!("Snap_{inc_snap_start}",),
                 kind: DataKind::Audio,
             })?;
-            engine.apply(Command::AddTrack {
-                name: "Clap".into(),
+            let snap_track = engine.apply(AddTrack {
+                name: format!("Clap_{inc_clap_start}"),
                 kind: DataKind::Audio,
             })?;
 
-            let (clap_track, snap_track) = {
-                let ids: Vec<_> = engine.project().tracks.keys().collect();
-                (ids[0], ids[1])
-            };
-
-            engine.apply(Command::AddClip {
+            engine.apply(AddClip {
                 track: clap_track,
                 start: engine::tick::Tick(inc_clap_start),
                 end: engine::tick::Tick(clap_len),
                 asset: clap_asset,
             })?;
-            engine.apply(Command::AddClip {
+            engine.apply(AddClip {
                 track: snap_track,
                 start: engine::tick::Tick(inc_snap_start),
                 end: engine::tick::Tick(snap_len),
@@ -79,7 +69,7 @@ mod tests {
             inc_snap_start += clap_len + snap_len;
         }
 
-        engine.apply(Command::Play)?;
+        engine.play()?;
 
         Ok(())
     }

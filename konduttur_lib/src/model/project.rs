@@ -9,7 +9,9 @@ use crate::{
             track::{Track, TrackID},
         },
         asset::{Asset, AssetID},
-        flow::{Link, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex},
+        flow::{
+            Link, LinkID, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex,
+        },
     },
 };
 use anyhow::Result;
@@ -59,7 +61,7 @@ impl ProjectData {
         &mut self,
         from: (NodeID, SocketIndex),
         to: (NodeID, SocketIndex),
-    ) -> Result<()> {
+    ) -> Result<LinkID> {
         let from_kind = self.socket_kind_of(from, true)?;
         let to_kind = self.socket_kind_of(to, false)?;
         if !from_kind.can_connect_to(to_kind) {
@@ -69,14 +71,14 @@ impl ProjectData {
             }
             .into());
         }
-        self.graph.links.insert(Link { from, to });
+        let link_id = self.graph.links.insert(Link { from, to });
         if self.topo_sort().is_err() {
             self.graph
                 .links
                 .retain(|_, l| !(l.from == from && l.to == to));
             return Err(EngineError::WouldCreateCycle.into());
         }
-        Ok(())
+        Ok(link_id)
     }
 
     pub fn move_clip(&mut self, track: TrackID, clip: ClipID, new_start: Tick) -> Result<()> {
@@ -98,7 +100,7 @@ impl ProjectData {
         start: Tick,
         length: Tick,
         asset: AssetID,
-    ) -> Result<()> {
+    ) -> Result<ClipID> {
         let clip_id = self.clips.insert(Clip {
             start,
             length,
@@ -109,7 +111,7 @@ impl ProjectData {
             .get_mut(track)
             .ok_or(EngineError::TrackNotFound(track))?;
         track.clips.insert(start, clip_id);
-        Ok(())
+        Ok(clip_id)
     }
 
     pub fn remove_track(&mut self, track_id: TrackID) -> Result<()> {
@@ -128,7 +130,7 @@ impl ProjectData {
         Ok(())
     }
 
-    pub fn add_track(&mut self, name: String, kind: DataKind) -> Result<()> {
+    pub fn add_track(&mut self, name: String, kind: DataKind) -> Result<TrackID> {
         let track_id = self.tracks.insert(Track {
             name,
             kind,
@@ -151,7 +153,7 @@ impl ProjectData {
             from: (node_id, 0),
             to: (master, 0),
         });
-        Ok(())
+        Ok(track_id)
     }
 
     pub fn socket_kind_of(

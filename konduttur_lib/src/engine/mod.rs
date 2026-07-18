@@ -1,23 +1,24 @@
-use anyhow::Result;
-use arc_swap::ArcSwap;
-use assert_no_alloc::assert_no_alloc;
-use cpal::{SampleFormat, StreamConfig};
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use thiserror::Error;
-
 pub mod assetserver;
+pub mod command;
 pub mod engineconfig;
 pub mod tick;
 
+use std::sync::{Arc, atomic::AtomicU64};
+
+pub use crate::engine::command::*;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 use crate::model::{
     DataKind, Renderable,
-    arr::{clip::ClipID, track::TrackID},
+    arr::track::TrackID,
     asset::{Asset, AssetID},
-    flow::{NativeNodeType, NodeID, NodePayload, SocketIndex},
+    flow::{NativeNodeType, NodeID, NodePayload},
     project::ProjectData,
 };
+
+use anyhow::Result;
+use arc_swap::ArcSwap;
+use cpal::SampleFormat;
+use thiserror::Error;
 
 // ---------------------------------------------------------------------
 // Compiled schedule
@@ -162,8 +163,6 @@ pub fn execute_block<'a>(
             }
         }
 
-        // 2. Call the node's internal process method with pure 1-to-1 socket bindings
-       ;
         process_node(
             &node.payload,
             project,
@@ -175,7 +174,6 @@ pub fn execute_block<'a>(
         );
     }
 
-    // 3. Extract output safely
     executor.get_input(schedule.master_output_slot)
     // })
 }
@@ -200,70 +198,10 @@ fn process_node(
             let input_buf = pool.get_input(inputs[0]);
             let output_buf = pool.get_output(outputs[0]);
 
-            output_buf.copy_from_slice(&input_buf);
+            output_buf.copy_from_slice(input_buf);
         }
         NodePayload::Native(_other) => unimplemented!("native node type not wired up yet"),
         NodePayload::Group(_) => unimplemented!("group inlining not implemented yet"),
-    }
-}
-
-pub enum Command {
-    AddTrack {
-        name: String,
-        kind: DataKind,
-    },
-    RemoveTrack(TrackID),
-    AddClip {
-        track: TrackID,
-        start: Tick,
-        end: Tick,
-        asset: AssetID,
-    },
-    MoveClip {
-        track: TrackID,
-        clip: ClipID,
-        new_start: Tick,
-    },
-    AddLink {
-        from: (NodeID, SocketIndex),
-        to: (NodeID, SocketIndex),
-    },
-    RemoveLink {
-        from: (NodeID, SocketIndex),
-        to: (NodeID, SocketIndex),
-    },
-    Play,
-    MovePlayhead {
-        to: Tick,
-    },
-}
-
-impl std::fmt::Display for Command {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Command::AddTrack { name, kind } => write!(f, "Added {kind:?} track \"{name}\""),
-            Command::RemoveTrack(track_id) => write!(f, "Removed track \"{track_id:?}\""),
-            Command::AddClip {
-                track,
-                start,
-                end,
-                asset,
-            } => {
-                write!(
-                    f,
-                    "Added clip {asset:?} to {track:?} at {start:?} until {end:?} ticks"
-                )
-            }
-            Command::MoveClip {
-                track,
-                clip,
-                new_start,
-            } => todo!(),
-            Command::AddLink { from, to } => todo!(),
-            Command::RemoveLink { from, to } => todo!(),
-            Self::Play => write!(f, "Playing track from"),
-            Self::MovePlayhead { to } => write!(f, "Moved playhead to {to:?}"),
-        }
     }
 }
 
@@ -326,12 +264,15 @@ impl Engine {
         id
     }
 
-    pub fn apply(&mut self, cmd: Command) -> Result<()> {
+    pub fn apply<T>(&mut self, cmd: T) -> Result<T::Output>
+    where
+        T: Command,
+    {
         let mut next = (*self.current).clone();
-        println!("{cmd}");
-        self.apply_command(&mut next, cmd)?;
+
+        let res = self.apply_command(&mut next, cmd)?;
         self.commit(next);
-        Ok(())
+        Ok(res)
     }
 
     pub fn undo(&mut self) {
@@ -368,34 +309,20 @@ impl Engine {
         }));
     }
 
-    fn apply_command(&self, project: &mut ProjectData, cmd: Command) -> Result<()> {
-        match cmd {
-            Command::AddTrack { name, kind } => project.add_track(name, kind),
-
-            Command::RemoveTrack(track_id) => project.remove_track(track_id),
-            Command::AddClip {
-                track,
-                start,
-                end: length,
-                asset,
-            } => project.add_clip_to_track(track, start, length, asset),
-            Command::MoveClip {
-                track,
-                clip,
-                new_start,
-            } => project.move_clip(track, clip, new_start),
-            Command::AddLink { from, to } => project.add_link(from, to),
-            Command::RemoveLink { from, to } => project.remove_link(from, to),
-            Command::Play => self.play(),
-            Command::MovePlayhead { to } => {
-                self.playhead
-                    .swap(to.0, std::sync::atomic::Ordering::Relaxed);
-                Ok(())
-            }
-        }
+    fn apply_command<T>(&self, project: &mut ProjectData, cmd: T) -> Result<T::Output>
+    where
+        T: Command,
+    {
+        cmd.execute(project)
     }
 
-    fn play(&self) -> Result<()> {
+    pub fn move_playhead(&self, to: Tick) -> Result<()> {
+        self.playhead
+            .swap(to.0, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
+    pub fn play(&self) -> Result<()> {
         use cpal::traits::StreamTrait;
         // --- 3. Hand the audio thread its read handle -----------------------
         let render_state: Arc<ArcSwap<RenderState>> = self.render_state_handle();

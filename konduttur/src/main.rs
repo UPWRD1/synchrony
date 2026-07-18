@@ -1,9 +1,6 @@
 pub mod filesystem;
 
-use iced::{
-    Fill,
-    widget::{Column, button, column, container, text},
-};
+use iced::widget::{Column, button, column, text};
 
 pub fn main() -> iced::Result {
     iced::run(Counter::update, Counter::view)

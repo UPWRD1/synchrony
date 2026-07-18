@@ -16,7 +16,7 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 
-pub fn load_audio_asset(path: impl Into<PathBuf>, expected_sample_rate: u32) -> Result<Asset> {
+pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<Asset> {
     let path = path.into();
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.
