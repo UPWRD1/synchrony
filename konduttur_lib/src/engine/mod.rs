@@ -10,7 +10,7 @@ use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 use crate::model::{
     DataKind, Renderable,
     arr::track::TrackID,
-    asset::{AssetID, AudioAsset},
+    asset::{Asset, AssetID},
     flow::{NativeNodeType, NodeID, NodePayload},
     project::ProjectData,
 };
@@ -70,21 +70,21 @@ impl std::fmt::Display for EngineError {
 
 pub struct BlockBufferPool {
     /// Contiguous pre-allocated block: (buffer_count * block_size)
-    audio_memory: Vec<f32>,
-    audio_block_size: usize,
+    memory: Vec<f32>,
+    block_size: usize,
 }
 
 impl BlockBufferPool {
-    pub fn new(buffer_count: usize, audio_block_size: usize) -> Self {
+    pub fn new(buffer_count: usize, block_size: usize) -> Self {
         Self {
-            audio_memory: vec![0.0f32; buffer_count * audio_block_size],
-            audio_block_size,
+            memory: vec![0.0f32; buffer_count * block_size],
+            block_size,
         }
     }
 
     #[inline]
     pub fn clear(&mut self) {
-        self.audio_memory.fill(0.0f32);
+        self.memory.fill(0.0f32);
     }
 
     /// Creates an execution context that allows unsafe, arbitrary slot slicing
@@ -92,10 +92,10 @@ impl BlockBufferPool {
     #[inline]
     pub fn executor(&mut self) -> PoolExecutor {
         PoolExecutor {
-            ptr: self.audio_memory.as_mut_ptr(),
-            block_size: self.audio_block_size,
+            ptr: self.memory.as_mut_ptr(),
+            block_size: self.block_size,
             // Track length to avoid out-of-bounds memory access in debug mode
-            total_len: self.audio_memory.len(),
+            total_len: self.memory.len(),
         }
     }
 }
@@ -157,7 +157,7 @@ pub fn execute_block<'a>(
                 let source = executor.get_input(source_slot);
 
                 // Simple additive loop: easily optimized by hardware auto-vectorization
-                for sample_idx in 0..pool.audio_block_size {
+                for sample_idx in 0..pool.block_size {
                     target[sample_idx] += source[sample_idx];
                 }
             }
@@ -190,15 +190,8 @@ fn process_node(
     match payload {
         NodePayload::TrackReader(track_id) => {
             if let Some(track) = project.tracks.get(*track_id) {
-                match track.kind {
-                    DataKind::Audio | DataKind::Cv => {
-                        let output_buf = pool.get_output(outputs[0]);
-                        track.render(project, output_buf, block_start, channels);
-                    }
-                    DataKind::Midi => {
-                        todo!()
-                    }
-                }
+                let output_buf = pool.get_output(outputs[0]);
+                track.render(project, output_buf, block_start, channels);
             }
         }
         NodePayload::Native(NativeNodeType::Master) => {
@@ -264,7 +257,7 @@ impl Engine {
     /// graph/clip edits, isn't meaningfully undo-able in the same sense.
     /// A real engine would still route this through some queue so it
     /// doesn't block the caller, but it's direct here for clarity.
-    pub fn load_asset(&mut self, asset: AudioAsset) -> AssetID {
+    pub fn load_asset(&mut self, asset: Asset) -> AssetID {
         let mut next = (*self.current).clone();
         let id = next.assets.insert(asset);
         self.commit(next);

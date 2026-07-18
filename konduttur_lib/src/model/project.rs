@@ -8,7 +8,7 @@ use crate::{
             clip::{Clip, ClipData, ClipID},
             track::{Track, TrackID},
         },
-        asset::{AssetID, AudioAsset},
+        asset::{Asset, AssetID},
         flow::{
             Link, LinkID, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex,
         },
@@ -22,7 +22,7 @@ use slotmap::SlotMap;
 pub struct ProjectData {
     pub tracks: SlotMap<TrackID, Track>,
     pub clips: SlotMap<ClipID, Clip>,
-    pub assets: SlotMap<AssetID, AudioAsset>,
+    pub assets: SlotMap<AssetID, Asset>,
     pub graph: NodeGraph,
     pub master_node_id: NodeID,
 }
@@ -130,17 +130,14 @@ impl ProjectData {
         Ok(())
     }
 
-    pub fn add_track<D: DataKind>(&mut self, name: String) -> Result<TrackID> {
-        let track_id = 
-            self.tracks.insert(Track {
-                name,
-                kind,
-                gain: 1.0,
-                linked_node_id: None,
-                clips: Default::default(),
-            })
-            
-        };
+    pub fn add_track(&mut self, name: String, kind: DataKind) -> Result<TrackID> {
+        let track_id = self.tracks.insert(Track {
+            name,
+            kind,
+            gain: 1.0,
+            linked_node_id: None,
+            clips: Default::default(),
+        });
         let node = Node::new(
             vec![],
             vec![Socket::new(kind, "out", true)],
@@ -149,6 +146,8 @@ impl ProjectData {
         let node_id = self.graph.nodes.insert(node);
         self.tracks[track_id].linked_node_id = Some(node_id);
 
+        // Convenience default: new tracks route straight to master.
+        // Same AddLink path a user rewiring Flow view would go through.
         let master = self.master_node_id;
         self.graph.links.insert(Link {
             from: (node_id, 0),
