@@ -12,6 +12,7 @@ mod tests {
     use super::*;
     use crate::engine::assetserver;
     use crate::engine::{AddClip, AddTrack};
+    use crate::model::AudioKind;
     use crate::model::project::ProjectData;
     use anyhow::Result;
 
@@ -30,8 +31,10 @@ mod tests {
         // --- 2. Build the project through the real API, not by hand --------
         let mut engine = Engine::new(project)?;
 
-        let clap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/reliable.wav")?);
-        let snap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/snare.wav")?);
+        let clap_asset =
+            engine.load_audio_asset(assetserver::load_audio_asset("./assets/reliable.wav")?);
+        let snap_asset =
+            engine.load_audio_asset(assetserver::load_audio_asset("./assets/snare.wav")?);
 
         let clap_len = {
             let asset = &engine.project().assets.audio[clap_asset];
@@ -44,14 +47,11 @@ mod tests {
         let mut inc_clap_start = 0;
         let mut inc_snap_start = clap_len;
         for _ in 0..12 {
-            let clap_track = engine.apply(AddTrack {
-                name: format!("Snap_{inc_snap_start}",),
-                kind: DataKind::Audio,
-            })?;
-            let snap_track = engine.apply(AddTrack {
-                name: format!("Clap_{inc_clap_start}"),
-                kind: DataKind::Audio,
-            })?;
+            let clap_track = engine.apply(AddTrack::<AudioKind>::new(format!(
+                "Snap_{inc_snap_start}",
+            )))?;
+            let snap_track =
+                engine.apply(AddTrack::<AudioKind>::new(format!("Clap_{inc_clap_start}")))?;
 
             engine.apply(AddClip {
                 track: clap_track,

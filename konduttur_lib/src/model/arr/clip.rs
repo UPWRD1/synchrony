@@ -5,10 +5,7 @@ use slotmap::new_key_type;
 
 use crate::{
     engine::tick::Tick,
-    model::{
-        AudioKind, DataKind, Renderable, TypedKey,
-        asset::{AssetID, AssetKey},
-    },
+    model::{AudioKind, DataKind, Renderable, TypedKey, asset::AssetID},
 };
 
 new_key_type! {
@@ -19,7 +16,7 @@ new_key_type! {
 pub struct Clip<D: DataKind> {
     pub start: Tick,
     pub length: Tick,
-    pub data: TypedKey<AssetKey, D>,
+    pub data: TypedKey<AssetID, D>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -39,7 +36,7 @@ impl Renderable for Clip<AudioKind> {
     ) {
         let block_len: Tick = (audio_buf.len() / channels as usize).into();
         let block_end = block_start + block_len;
-        let Some(asset) = proj.assets.get(asset_id) else {
+        let Some(asset) = proj.assets.audio.get(asset_id) else {
             panic!("clip's asset does not exist");
         };
 

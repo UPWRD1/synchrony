@@ -7,6 +7,7 @@ use std::sync::{Arc, atomic::AtomicU64};
 
 pub use crate::engine::command::*;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
+use crate::model::project::TrackContainer;
 use crate::model::{
     DataKind, Renderable,
     arr::track::TrackID,
@@ -54,7 +55,7 @@ pub struct CompiledGraph {
 pub enum EngineError {
     TrackNotFound(TrackID),
     NodeNotFound(NodeID),
-    IncompatibleSockets { from: DataKind, to: DataKind },
+    IncompatibleSockets, //{ from: DataKind, to: DataKind },
     WouldCreateCycle,
 }
 
@@ -190,15 +191,19 @@ fn process_node(
     match payload {
         NodePayload::TrackReader(track_id) => {
             if let Some(track) = project.tracks.get(*track_id) {
-                
-                    DataKind::Audio | DataKind::Cv => {
+                match track {
+                    TrackContainer::Audio(track) => {
                         let output_buf = pool.get_output(outputs[0]);
                         track.render(project, output_buf, block_start, channels);
                     }
-                    DataKind::Midi => {
+                    TrackContainer::Cv(track) => {
+                        let output_buf = pool.get_output(outputs[0]);
+                        track.render(project, output_buf, block_start, channels);
+                    }
+                    TrackContainer::Midi(_) => {
                         todo!()
                     }
-                
+                }
             }
         }
         NodePayload::Native(NativeNodeType::Master) => {

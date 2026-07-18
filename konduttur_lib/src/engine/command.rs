@@ -21,6 +21,15 @@ pub struct AddTrack<D: DataKind> {
     _p: PhantomData<D>,
 }
 
+impl<T: DataKind> AddTrack<T> {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            _p: PhantomData,
+        }
+    }
+}
+
 impl<D: DataKind> Command for AddTrack<D> {
     type Output = TrackID;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {

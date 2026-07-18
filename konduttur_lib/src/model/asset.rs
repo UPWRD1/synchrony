@@ -3,7 +3,10 @@ use std::{path::PathBuf, sync::Arc};
 use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 
-use crate::engine::tick::Tick;
+use crate::{
+    engine::tick::Tick,
+    model::{AudioKind, TypedKey},
+};
 
 new_key_type! {
     pub struct AssetID;

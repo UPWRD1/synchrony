@@ -7,7 +7,7 @@ use crate::{
     engine::tick::Tick,
     model::{
         AudioKind, CvKind, DataKind, MidiKind, Renderable, TypedKey, arr::clip::ClipID,
-        flow::NodeID, project::ProjectData,
+        asset::AssetRegistry, flow::NodeID, project::ProjectData,
     },
 };
 
@@ -54,5 +54,11 @@ impl Renderable for Track<AudioKind> {
             };
             clip.render(proj, buf, block_start, channels)
         }
+    }
+}
+
+impl Renderable for Track<CvKind> {
+    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16) {
+        todo!();
     }
 }
