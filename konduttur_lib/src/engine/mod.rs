@@ -134,16 +134,14 @@ pub fn execute_block<'a>(
     schedule: &CompiledGraph,
     project: &ProjectData,
     block_start: Tick,
-    frame_count: usize,
     channels: u16,
     pool: &'a mut BlockBufferPool,
 ) -> &'a [f32] {
     // assert_no_alloc(|| {
-    let sample_count = frame_count * channels as usize;
-    // pool.ensure(schedule.buffer_count, sample_count);
 
-    // Wipe layout elements: Completely clean block with zero allocation overhead
+    // Clear the pool. Do it unless you want to summon demons.
     pool.clear();
+
     let mut executor = pool.executor();
 
     for i in 0..schedule.steps.len() {
@@ -152,23 +150,20 @@ pub fn execute_block<'a>(
 
         // 1. Process engine-level fan-in matrix configurations
         for sum_cmd in &step.prep_sums {
-            unsafe {
-                let target = executor.get_output(sum_cmd.target_scratch_slot);
+            let target = executor.get_output(sum_cmd.target_scratch_slot);
 
-                for &source_slot in &sum_cmd.source_slots {
-                    let source = executor.get_input(source_slot);
+            for &source_slot in &sum_cmd.source_slots {
+                let source = executor.get_input(source_slot);
 
-                    // Simple additive loop: easily optimized by hardware auto-vectorization
-                    for sample_idx in 0..pool.block_size {
-                        target[sample_idx] += source[sample_idx];
-                    }
+                // Simple additive loop: easily optimized by hardware auto-vectorization
+                for sample_idx in 0..pool.block_size {
+                    target[sample_idx] += source[sample_idx];
                 }
             }
         }
 
         // 2. Call the node's internal process method with pure 1-to-1 socket bindings
        ;
-        let node = &project.graph.nodes[step.node_id];
         process_node(
             &node.payload,
             project,
@@ -182,7 +177,6 @@ pub fn execute_block<'a>(
 
     // 3. Extract output safely
     executor.get_input(schedule.master_output_slot)
-
     // })
 }
 
@@ -239,6 +233,9 @@ pub enum Command {
         to: (NodeID, SocketIndex),
     },
     Play,
+    MovePlayhead {
+        to: Tick,
+    },
 }
 
 impl std::fmt::Display for Command {
@@ -265,6 +262,7 @@ impl std::fmt::Display for Command {
             Command::AddLink { from, to } => todo!(),
             Command::RemoveLink { from, to } => todo!(),
             Self::Play => write!(f, "Playing track from"),
+            Self::MovePlayhead { to } => write!(f, "Moved playhead to {to:?}"),
         }
     }
 }
@@ -389,6 +387,11 @@ impl Engine {
             Command::AddLink { from, to } => project.add_link(from, to),
             Command::RemoveLink { from, to } => project.remove_link(from, to),
             Command::Play => self.play(),
+            Command::MovePlayhead { to } => {
+                self.playhead
+                    .swap(to.0, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            }
         }
     }
 
@@ -447,7 +450,6 @@ impl Engine {
                     &state.schedule,
                     &state.project,
                     tick::Tick(start),
-                    frame_count,
                     config.channels,
                     &mut pool,
                 );

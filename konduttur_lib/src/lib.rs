@@ -38,20 +38,6 @@ mod tests {
             engine.config.config.sample_rate,
         )?);
 
-        engine.apply(Command::AddTrack {
-            name: "Snap".into(),
-            kind: DataKind::Audio,
-        })?;
-        engine.apply(Command::AddTrack {
-            name: "Clap".into(),
-            kind: DataKind::Audio,
-        })?;
-
-        let (clap_track, snap_track) = {
-            let ids: Vec<_> = engine.project().tracks.keys().collect();
-            (ids[0], ids[1])
-        };
-
         let clap_len = {
             let asset = &engine.project().assets[clap_asset];
             asset.samples.len() as u64 / asset.channels as u64
@@ -60,21 +46,41 @@ mod tests {
             let asset = &engine.project().assets[snap_asset];
             asset.samples.len() as u64 / asset.channels as u64
         };
+        let mut inc_clap_start = 0;
+        let mut inc_snap_start = clap_len;
+        for _ in 0..12 {
+            engine.apply(Command::AddTrack {
+                name: "Snap".into(),
+                kind: DataKind::Audio,
+            })?;
+            engine.apply(Command::AddTrack {
+                name: "Clap".into(),
+                kind: DataKind::Audio,
+            })?;
 
-        engine.apply(Command::AddClip {
-            track: clap_track,
-            start: engine::tick::Tick(0),
-            end: engine::tick::Tick(clap_len),
-            asset: clap_asset,
-        })?;
-        // Starts right where the kick clip ends -- sequenced across two tracks.
-        engine.apply(Command::AddClip {
-            track: snap_track,
-            start: engine::tick::Tick(clap_len),
-            end: engine::tick::Tick(snap_len),
-            asset: snap_asset,
-        })?;
+            let (clap_track, snap_track) = {
+                let ids: Vec<_> = engine.project().tracks.keys().collect();
+                (ids[0], ids[1])
+            };
+
+            engine.apply(Command::AddClip {
+                track: clap_track,
+                start: engine::tick::Tick(inc_clap_start),
+                end: engine::tick::Tick(clap_len),
+                asset: clap_asset,
+            })?;
+            engine.apply(Command::AddClip {
+                track: snap_track,
+                start: engine::tick::Tick(inc_snap_start),
+                end: engine::tick::Tick(snap_len),
+                asset: snap_asset,
+            })?;
+            inc_clap_start += clap_len + snap_len;
+            inc_snap_start += clap_len + snap_len;
+        }
+
         engine.apply(Command::Play)?;
+
         Ok(())
     }
 }
