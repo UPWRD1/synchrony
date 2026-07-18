@@ -3,12 +3,12 @@ use std::collections::{HashMap, VecDeque};
 use crate::{
     engine::{CompiledGraph, EngineError, ScheduleStep, SlotIndex, SummingCommand, tick::Tick},
     model::{
-        DataKind,
+        AudioKind, CvKind, DataKind, MidiKind,
         arr::{
             clip::{Clip, ClipData, ClipID},
-            track::{Track, TrackID},
+            track::{AudioTrack, CvTrack, MidiTrack, Track, TrackID},
         },
-        asset::{AssetID, AudioAsset},
+        asset::{AssetID, AssetRegistry},
         flow::{
             Link, LinkID, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex,
         },
@@ -19,10 +19,24 @@ use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TrackContainer {
+    Audio(AudioTrack),
+    Midi(MidiTrack),
+    Cv(CvTrack),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ClipContainer {
+    Audio(Clip<AudioKind>),
+    Midi(Clip<MidiKind>),
+    Cv(Clip<CvKind>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectData {
-    pub tracks: SlotMap<TrackID, Track>,
-    pub clips: SlotMap<ClipID, Clip>,
-    pub assets: SlotMap<AssetID, AudioAsset>,
+    pub tracks: SlotMap<TrackID, TrackContainer>,
+    pub clips: SlotMap<ClipID, ClipContainer>,
+    pub assets: AssetRegistry,
     pub graph: NodeGraph,
     pub master_node_id: NodeID,
 }
@@ -131,16 +145,13 @@ impl ProjectData {
     }
 
     pub fn add_track<D: DataKind>(&mut self, name: String) -> Result<TrackID> {
-        let track_id = 
-            self.tracks.insert(Track {
-                name,
-                kind,
-                gain: 1.0,
-                linked_node_id: None,
-                clips: Default::default(),
-            })
-            
-        };
+        let track_id = self.tracks.insert(Track {
+            name,
+            kind,
+            gain: 1.0,
+            linked_node_id: None,
+            clips: Default::default(),
+        });
         let node = Node::new(
             vec![],
             vec![Socket::new(kind, "out", true)],

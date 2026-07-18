@@ -190,7 +190,7 @@ fn process_node(
     match payload {
         NodePayload::TrackReader(track_id) => {
             if let Some(track) = project.tracks.get(*track_id) {
-                match track.kind {
+                
                     DataKind::Audio | DataKind::Cv => {
                         let output_buf = pool.get_output(outputs[0]);
                         track.render(project, output_buf, block_start, channels);
@@ -198,7 +198,7 @@ fn process_node(
                     DataKind::Midi => {
                         todo!()
                     }
-                }
+                
             }
         }
         NodePayload::Native(NativeNodeType::Master) => {
@@ -264,9 +264,9 @@ impl Engine {
     /// graph/clip edits, isn't meaningfully undo-able in the same sense.
     /// A real engine would still route this through some queue so it
     /// doesn't block the caller, but it's direct here for clarity.
-    pub fn load_asset(&mut self, asset: AudioAsset) -> AssetID {
+    pub fn load_audio_asset(&mut self, asset: AudioAsset) -> AssetID {
         let mut next = (*self.current).clone();
-        let id = next.assets.insert(asset);
+        let id = next.assets.audio.insert(asset);
         self.commit(next);
         id
     }
