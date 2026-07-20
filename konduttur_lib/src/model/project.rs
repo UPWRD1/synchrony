@@ -9,14 +9,12 @@ use crate::{
             track::{AudioTrack, AudioTrackID, Track},
         },
         asset::{AudioAsset, AudioAssetID},
-        flow::{
-            Link, LinkID, Master, Node, NodeGraph, NodeID, Socket, SocketIndex, SocketKind,
-            TrackReader,
-        },
+        flow::{Link, LinkID, Master, Node, NodeGraph, NodeID, SocketIndex, TrackReader},
     },
 };
 use anyhow::Result;
 
+use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone)]
@@ -61,10 +59,10 @@ impl ProjectData {
     ) -> Result<LinkID> {
         let from_kind = self.socket_kind_of(from, true)?;
         let to_kind = self.socket_kind_of(to, false)?;
-        if !from_kind.can_connect_to(to_kind) {
+        if !from_kind.can_connect_to(*to_kind) {
             return Err(EngineError::IncompatibleSockets {
-                from: from_kind,
-                to: to_kind,
+                from: *from_kind,
+                to: *to_kind,
             }
             .into());
         }
@@ -151,19 +149,19 @@ impl ProjectData {
         &self,
         endpoint: (NodeID, SocketIndex),
         is_output: bool,
-    ) -> Result<&SocketKind> {
+    ) -> Result<&DataKind> {
         let node = self
             .graph
             .nodes
             .get(endpoint.0)
             .ok_or(EngineError::NodeNotFound(endpoint.0))?;
         let list = if is_output {
-            node.outputs_mut()
+            node.outputs()
         } else {
-            node.inputs_mut()
+            node.inputs()
         };
         list.get(endpoint.1 as usize)
-            .map(|s| s)
+            .map(|s| &s.kind)
             .ok_or(EngineError::NodeNotFound(endpoint.0).into())
     }
 
@@ -218,7 +216,7 @@ impl ProjectData {
 
         for &node_id in &order {
             let node = &self.graph.nodes[node_id];
-            for i in 0..node.outputs.len() {
+            for i in 0..node.outputs().len() {
                 output_slot.insert((node_id, i as SocketIndex), buffer_count);
                 buffer_count += 1;
             }
@@ -230,7 +228,7 @@ impl ProjectData {
             let node = &self.graph.nodes[node_id];
 
             // Temporary container to collect all lines feeding each input socket
-            let mut raw_input_sources = vec![Vec::new(); node.inputs.len()];
+            let mut raw_input_sources = vec![Vec::new(); node.inputs().len()];
             for link in self.graph.links.values().filter(|l| l.to.0 == node_id) {
                 if let Some(&slot) = output_slot.get(&link.from) {
                     raw_input_sources[link.to.1 as usize].push(slot);
@@ -238,7 +236,7 @@ impl ProjectData {
             }
 
             let mut prep_sums = Vec::new();
-            let mut input_slots = Vec::with_capacity(node.inputs.len());
+            let mut input_slots = Vec::with_capacity(node.inputs().len());
 
             // Process every single input socket to calculate fan-in mapping metadata
             for sources in raw_input_sources {
@@ -267,7 +265,7 @@ impl ProjectData {
                 }
             }
 
-            let output_slots: Vec<SlotIndex> = (0..node.audio_outputs_mut().len())
+            let output_slots: Vec<SlotIndex> = (0..node.outputs().len())
                 .map(|i| output_slot[&(node_id, i as SocketIndex)])
                 .collect();
 

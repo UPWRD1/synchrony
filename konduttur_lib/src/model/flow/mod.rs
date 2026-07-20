@@ -7,7 +7,7 @@ use slotmap::{SlotMap, new_key_type};
 
 use crate::{
     engine::{PoolExecutor, SlotIndex, tick::Tick},
-    model::{Audio, Kind, Renderable, Stored, project::ProjectData},
+    model::{Audio, DataKind, Kind, Renderable, Stored, project::ProjectData},
 };
 
 new_key_type! {
@@ -18,35 +18,25 @@ new_key_type! {
 pub type SocketIndex = usize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Socket<K: Kind> {
-    pub kind: PhantomData<K>,
-    pub name: String,
+pub struct Socket {
+    pub kind: DataKind,
+    pub name: &'static str,
     pub visible: bool,
 }
 
-impl<K: Kind> Socket<K> {
-    pub fn new<C: Kind>(name: impl Into<String>, visible: bool) -> Socket<C> {
-        Socket::<C> {
-            kind: PhantomData,
-            name: name.into(),
+impl Socket {
+    pub fn new<C: Kind>(name: impl Into<String>, visible: bool) -> Socket {
+        Self {
+            kind: C::into_datakind(),
+            name: name.into().leak(),
             visible,
         }
     }
 }
-#[derive(Debug, Clone)]
-pub enum SocketKind {
-    Audio(Socket<Audio>),
-}
-
-impl From<Socket<Audio>> for SocketKind {
-    fn from(value: Socket<Audio>) -> Self {
-        SocketKind::Audio(value)
-    }
-}
 
 pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
-    fn inputs(&self) -> &Vec<SocketKind>;
-    fn outputs(&self) -> &Vec<SocketKind>;
+    fn inputs<'a>(&'a self) -> &'a [Socket];
+    fn outputs(&self) -> &[Socket];
 
     fn process(
         &self,
@@ -63,24 +53,31 @@ dyn_clone::clone_trait_object!(Node);
 
 #[derive(Debug, Clone)]
 pub struct Master {
-    input: Socket<Audio>,
+    input: Socket,
 }
 
 impl Master {
+    const INPUTS: &'static [Socket] = &[Socket {
+        kind: DataKind::Audio,
+        name: "input",
+        visible: true,
+    }];
+
+    const OUTPUTS: &'static [Socket] = &[];
     pub fn new() -> Self {
         Self {
-            input: Socket::<Audio>::new("input", true),
+            input: Socket::new::<Audio>("input", true),
         }
     }
 }
 
 impl Node for Master {
-    fn inputs(&self) -> &Vec<SocketKind> {
-        todo!()
+    fn inputs(&self) -> &'static [Socket] {
+        Self::INPUTS
     }
 
-    fn outputs(&self) -> &Vec<SocketKind> {
-        todo!()
+    fn outputs(&self) -> &'static [Socket] {
+        Self::OUTPUTS
     }
     fn process(
         &self,
@@ -101,7 +98,7 @@ impl Node for Master {
 #[derive(Debug, Clone)]
 pub struct TrackReader<K: Kind> {
     kind: PhantomData<K>,
-    output: Socket<K>,
+    output: Socket,
     id: <K::Track as Stored>::Id,
 }
 
@@ -109,7 +106,7 @@ impl<K: Kind> TrackReader<K> {
     pub fn new(id: <K::Track as Stored>::Id) -> Self {
         Self {
             kind: PhantomData,
-            output: Socket::<K>::new("audio out", true),
+            output: Socket::new::<K>("audio out", true),
             id,
         }
     }
@@ -131,11 +128,11 @@ impl Node for TrackReader<Audio> {
         }
     }
 
-    fn inputs(&self) -> &Vec<SocketKind> {
+    fn inputs<'a>(&'a self) -> &'a [Socket] {
         todo!()
     }
 
-    fn outputs(&self) -> &Vec<SocketKind> {
+    fn outputs(&self) -> &[Socket] {
         todo!()
     }
 }

@@ -7,14 +7,16 @@ use serde::Serialize;
 
 fn save_project_data(proj: ProjectData, path: &Path) -> Result<()> {
     let mut file = File::create(path)?;
-    proj.serialize(&mut Serializer::new(&mut file))?;
-    Ok(())
+    todo!()
+    // proj.serialize(&mut Serializer::new(&mut file))?;
+    // Ok(( )
 }
 
 fn open_project_data(path: &Path) -> Result<ProjectData> {
     let mut buf = vec![];
     let mut file = File::open(path)?;
     file.read_to_end(&mut buf)?;
-    let content: ProjectData = rmp_serde::decode::from_slice(&buf)?;
-    Ok(content)
+    todo!()
+    // let content: ProjectData = rmp_serde::decode::from_slice(&buf)?;
+    // Ok(content)
 }
