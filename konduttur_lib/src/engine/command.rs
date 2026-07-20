@@ -1,10 +1,9 @@
 use crate::{
     engine::tick::Tick,
     model::{
-        DataKind,
-        arr::{clip::ClipID, track::TrackID},
-        asset::AssetID,
-        flow::{NodeID, SocketIndex},
+        Kind, Stored,
+        arr::{clip::AudioClipID, track::AudioTrackID},
+        flow::{Node, NodeID, SocketIndex, TrackReader},
         project::ProjectData,
     },
 };
@@ -14,37 +13,40 @@ pub trait Command {
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output>;
 }
 
-pub struct AddTrack {
+pub struct AddTrack<K: Kind> {
     pub name: String,
-    pub kind: DataKind,
+    pub kind: K,
 }
 
-impl Command for AddTrack {
-    type Output = TrackID;
+impl<K: Kind> Command for AddTrack<K>
+where
+    TrackReader<K>: Node,
+{
+    type Output = <K::Track as Stored>::Id;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
-        project.add_track(self.name, self.kind)
+        project.add_track::<K>(self.name)
     }
 }
 
-pub struct RemoveTrack(pub TrackID);
+pub struct RemoveTrack(pub AudioTrackID);
 
-pub struct AddClip {
-    pub track: TrackID,
+pub struct AddClip<K: Kind> {
+    pub track: <K::Track as Stored>::Id,
     pub start: Tick,
     pub end: Tick,
-    pub asset: AssetID,
+    pub asset_id: <K::Asset as Stored>::Id,
 }
 
-impl Command for AddClip {
-    type Output = ClipID;
+impl<K: Kind> Command for AddClip<K> {
+    type Output = <K::Clip as Stored>::Id;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
-        project.add_clip_to_track(self.track, self.start, self.end, self.asset)
+        project.add_clip_to_track::<K>(self.track, self.start, self.end, self.asset_id)
     }
 }
 
 pub struct MoveClip {
-    pub track: TrackID,
-    pub clip: ClipID,
+    pub track: AudioTrackID,
+    pub clip: AudioClipID,
     pub new_start: Tick,
 }
 

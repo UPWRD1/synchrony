@@ -6,7 +6,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::model::asset::Asset;
+use crate::model::asset::AudioAsset;
 use symphonia::core::{
     audio::sample::Sample,
     codecs::audio::AudioDecoderOptions,
@@ -16,7 +16,7 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 
-pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<Asset> {
+pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<AudioAsset> {
     let path = path.into();
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.
@@ -85,17 +85,17 @@ pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<Asset> {
 
                 // Copy the audio samples from the generic audio buffer to the vector in interleaved
                 // order. The sample format to convert to is inferred from the type of the Vec.
-                audio_buf.copy_to_slice_interleaved(&mut scratch);
-                samples.append(&mut scratch);
                 // Sum up the total number of samples.
                 total_sample_count += scratch.len();
+                audio_buf.copy_to_slice_interleaved(&mut scratch);
+                samples.append(&mut scratch);
                 print!("\rDecoded {total_sample_count} samples");
             }
             Err(Error::DecodeError(_)) => (),
             Err(_) => break,
         }
     }
-    Ok(Asset {
+    Ok(AudioAsset {
         samples: Arc::new(samples),
         channels,
         gain: 20.0,

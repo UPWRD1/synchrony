@@ -5,23 +5,76 @@ use slotmap::new_key_type;
 
 use crate::{
     engine::tick::Tick,
-    model::{DataKind, Renderable, arr::clip::ClipID, flow::NodeID, project::ProjectData},
+    model::{
+        Audio, Kind, Renderable, Stored, arr::clip::AudioClipID, flow::NodeID, project::ProjectData,
+    },
 };
 
 new_key_type! {
-   pub struct TrackID;
+   pub struct AudioTrackID;
+}
+
+pub trait Track<K: Kind> {
+    fn name(&self) -> &str;
+    fn clips(&self) -> &BTreeMap<Tick, <K::Clip as Stored>::Id>;
+    fn clips_mut(&mut self) -> &mut BTreeMap<Tick, <K::Clip as Stored>::Id>;
+    fn linked_node_id(&self) -> Option<NodeID>;
+    fn linked_node_id_mut(&mut self) -> &mut Option<NodeID>;
+    fn new(name: impl Into<String>) -> Self;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Track {
+pub struct AudioTrack {
     pub name: String,
-    pub clips: BTreeMap<Tick, ClipID>,
+    pub clips: BTreeMap<Tick, AudioClipID>,
     pub gain: f32,
-    pub kind: DataKind,
     pub linked_node_id: Option<NodeID>,
 }
 
-impl Renderable for Track {
+impl Stored for AudioTrack {
+    type Id = AudioTrackID;
+
+    fn access(project: &ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
+        &project.tracks
+    }
+
+    fn access_mut(project: &mut ProjectData) -> &mut slotmap::SlotMap<Self::Id, Self> {
+        &mut project.tracks
+    }
+}
+
+impl Track<Audio> for AudioTrack {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn clips(&self) -> &BTreeMap<Tick, <<Audio as Kind>::Clip as Stored>::Id> {
+        &self.clips
+    }
+
+    fn clips_mut(&mut self) -> &mut BTreeMap<Tick, <<Audio as Kind>::Clip as Stored>::Id> {
+        &mut self.clips
+    }
+
+    fn linked_node_id(&self) -> Option<NodeID> {
+        self.linked_node_id
+    }
+
+    fn linked_node_id_mut(&mut self) -> &mut Option<NodeID> {
+        &mut self.linked_node_id
+    }
+
+    fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            clips: Default::default(),
+            gain: 1.0,
+            linked_node_id: None,
+        }
+    }
+}
+
+impl Renderable for AudioTrack {
     fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16) {
         // Deinterleave
         let block_len: Tick = (buf.len() / channels as usize).into();
