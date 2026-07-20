@@ -6,7 +6,7 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::model::asset::Asset;
+use crate::model::asset::AudioAsset;
 use symphonia::core::{
     audio::sample::Sample,
     codecs::audio::AudioDecoderOptions,
@@ -16,7 +16,7 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 
-pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<Asset> {
+pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<AudioAsset> {
     let path = path.into();
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.
@@ -95,7 +95,7 @@ pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<Asset> {
             Err(_) => break,
         }
     }
-    Ok(Asset {
+    Ok(AudioAsset {
         samples: Arc::new(samples),
         channels,
         gain: 20.0,

@@ -3,12 +3,12 @@ use std::collections::{HashMap, VecDeque};
 use crate::{
     engine::{CompiledGraph, EngineError, ScheduleStep, SlotIndex, SummingCommand, tick::Tick},
     model::{
-        DataKind,
+        Audio, DataKind, Kind, Stored,
         arr::{
-            clip::{Clip, ClipData, ClipID},
-            track::{Track, TrackID},
+            clip::{AudioClip, AudioClipID, Clip},
+            track::{AudioTrack, AudioTrackID, Track},
         },
-        asset::{Asset, AssetID},
+        asset::{AudioAsset, AudioAssetID},
         flow::{
             Link, LinkID, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex,
         },
@@ -20,9 +20,9 @@ use slotmap::SlotMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectData {
-    pub tracks: SlotMap<TrackID, Track>,
-    pub clips: SlotMap<ClipID, Clip>,
-    pub assets: SlotMap<AssetID, Asset>,
+    pub tracks: SlotMap<AudioTrackID, AudioTrack>,
+    pub clips: SlotMap<AudioClipID, AudioClip>,
+    pub assets: SlotMap<AudioAssetID, AudioAsset>,
     pub graph: NodeGraph,
     pub master_node_id: NodeID,
 }
@@ -32,8 +32,8 @@ impl ProjectData {
         let mut graph = NodeGraph::default();
 
         let master_node = Node::new(
-            vec![Socket::new(DataKind::Audio, "in", true)],
-            vec![Socket::new(DataKind::Audio, "out", false)],
+            vec![Socket::<Audio>::new("in", true)],
+            vec![Socket::<Audio>::new("out", false)],
             NodePayload::Native(NativeNodeType::Master),
         );
         let master_node_id = graph.nodes.insert(master_node);
@@ -81,11 +81,16 @@ impl ProjectData {
         Ok(link_id)
     }
 
-    pub fn move_clip(&mut self, track: TrackID, clip: ClipID, new_start: Tick) -> Result<()> {
+    pub fn move_clip(
+        &mut self,
+        track: AudioTrackID,
+        clip: AudioClipID,
+        new_start: Tick,
+    ) -> Result<()> {
         let track = self
             .tracks
             .get_mut(track)
-            .ok_or(EngineError::TrackNotFound(track))?;
+            .ok_or(EngineError::TrackNotFound)?;
         track.clips.retain(|_, &mut id| id != clip);
         track.clips.insert(new_start, clip);
         if let Some(c) = self.clips.get_mut(clip) {
@@ -94,57 +99,48 @@ impl ProjectData {
         Ok(())
     }
 
-    pub fn add_clip_to_track(
+    pub fn add_clip_to_track<K: Kind>(
         &mut self,
-        track: TrackID,
+        track: <K::Track as Stored>::Id,
         start: Tick,
         length: Tick,
-        asset: AssetID,
-    ) -> Result<ClipID> {
-        let clip_id = self.clips.insert(Clip {
-            start,
-            length,
-            data: ClipData::Audio(asset),
-        });
-        let track = self
-            .tracks
+        asset_id: <K::Asset as Stored>::Id,
+    ) -> Result<<K::Clip as Stored>::Id> {
+        let clip_id = K::Clip::access_mut(self).insert(K::Clip::new(start, length, asset_id));
+        let track = K::Track::access_mut(self)
             .get_mut(track)
-            .ok_or(EngineError::TrackNotFound(track))?;
-        track.clips.insert(start, clip_id);
+            .ok_or(EngineError::TrackNotFound)?;
+        track.clips_mut().insert(start, clip_id);
         Ok(clip_id)
     }
 
-    pub fn remove_track(&mut self, track_id: TrackID) -> Result<()> {
-        let track = self
-            .tracks
+    pub fn remove_track<K: Kind>(&mut self, track_id: <K::Track as Stored>::Id) -> Result<()> {
+        let track = K::Track::access_mut(self)
             .remove(track_id)
-            .ok_or(EngineError::TrackNotFound(track_id))?;
-        let linked_id = track.linked_node_id.expect("Track was orphaned from node");
+            .ok_or(EngineError::TrackNotFound)?;
+        let linked_id = track
+            .linked_node_id()
+            .expect("Track was orphaned from node");
         self.graph.nodes.remove(linked_id);
         self.graph
             .links
             .retain(|_, l| l.from.0 != linked_id && l.to.0 != linked_id);
-        for clip_id in track.clips.values() {
-            self.clips.remove(*clip_id);
+        for clip_id in track.clips().values() {
+            K::Clip::access_mut(self).remove(*clip_id);
         }
         Ok(())
     }
 
-    pub fn add_track(&mut self, name: String, kind: DataKind) -> Result<TrackID> {
-        let track_id = self.tracks.insert(Track {
-            name,
-            kind,
-            gain: 1.0,
-            linked_node_id: None,
-            clips: Default::default(),
-        });
+    pub fn add_track<K: Kind>(&mut self, name: String) -> Result<<K::Track as Stored>::Id> {
+        let mut tracks = K::Track::access_mut(self);
+        let track_id = tracks.insert(K::Track::new(name));
         let node = Node::new(
             vec![],
-            vec![Socket::new(kind, "out", true)],
-            NodePayload::TrackReader(track_id),
+            vec![Socket::new("out", true)],
+            NodePayload::AudioTrackReader(track_id),
         );
         let node_id = self.graph.nodes.insert(node);
-        self.tracks[track_id].linked_node_id = Some(node_id);
+        *tracks[track_id].linked_node_id_mut() = Some(node_id);
 
         // Convenience default: new tracks route straight to master.
         // Same AddLink path a user rewiring Flow view would go through.
@@ -160,7 +156,7 @@ impl ProjectData {
         &self,
         endpoint: (NodeID, SocketIndex),
         is_output: bool,
-    ) -> Result<DataKind, EngineError> {
+    ) -> Result<DataKind> {
         let node = self
             .graph
             .nodes
@@ -173,7 +169,7 @@ impl ProjectData {
         };
         list.get(endpoint.1 as usize)
             .map(|s| s.kind)
-            .ok_or(EngineError::NodeNotFound(endpoint.0))
+            .ok_or(EngineError::NodeNotFound(endpoint.0).into())
     }
 
     /// Kahn's algorithm topological sort + a bump-allocated buffer slot per

@@ -9,8 +9,7 @@ pub use crate::engine::command::*;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 use crate::model::{
     DataKind, Renderable,
-    arr::track::TrackID,
-    asset::{Asset, AssetID},
+    asset::{AudioAsset, AudioAssetID},
     flow::{NativeNodeType, NodeID, NodePayload},
     project::ProjectData,
 };
@@ -52,7 +51,7 @@ pub struct CompiledGraph {
 
 #[derive(Debug, Error)]
 pub enum EngineError {
-    TrackNotFound(TrackID),
+    TrackNotFound,
     NodeNotFound(NodeID),
     IncompatibleSockets { from: DataKind, to: DataKind },
     WouldCreateCycle,
@@ -188,7 +187,7 @@ fn process_node(
     pool: &mut PoolExecutor,
 ) {
     match payload {
-        NodePayload::TrackReader(track_id) => {
+        NodePayload::AudioTrackReader(track_id) => {
             if let Some(track) = project.tracks.get(*track_id) {
                 let output_buf = pool.get_output(outputs[0]);
                 track.render(project, output_buf, block_start, channels);
@@ -257,7 +256,7 @@ impl Engine {
     /// graph/clip edits, isn't meaningfully undo-able in the same sense.
     /// A real engine would still route this through some queue so it
     /// doesn't block the caller, but it's direct here for clarity.
-    pub fn load_asset(&mut self, asset: Asset) -> AssetID {
+    pub fn load_asset(&mut self, asset: AudioAsset) -> AudioAssetID {
         let mut next = (*self.current).clone();
         let id = next.assets.insert(asset);
         self.commit(next);

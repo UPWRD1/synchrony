@@ -1,30 +1,51 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::new_key_type;
 
 use crate::{
     engine::tick::Tick,
-    model::{Renderable, asset::AssetID},
+    model::{Audio, Kind, Renderable, Stored, asset::AudioAssetID},
 };
 
 new_key_type! {
-    pub struct ClipID;
+    pub struct AudioClipID;
+}
+
+pub trait Clip<K: Kind>: Sized + Serialize + DeserializeOwned {
+    fn new(start: Tick, length: Tick, asset_id: <K::Asset as Stored>::Id) -> Self;
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct Clip {
+pub struct AudioClip {
     pub start: Tick,
     pub length: Tick,
-    pub data: ClipData,
+    pub asset_id: AudioAssetID,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum ClipData {
-    Audio(AssetID),
-    Midi,
-    CV,
+impl Stored for AudioClip {
+    type Id = AudioClipID;
+
+    fn access(project: &crate::model::project::ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
+        &project.clips
+    }
+
+    fn access_mut(
+        project: &mut crate::model::project::ProjectData,
+    ) -> &mut slotmap::SlotMap<Self::Id, Self> {
+        &mut project.clips
+    }
 }
 
-impl Renderable for Clip {
+impl Clip<Audio> for AudioClip {
+    fn new(start: Tick, length: Tick, asset_id: <<Audio as Kind>::Asset as Stored>::Id) -> Self {
+        Self {
+            start,
+            length,
+            asset_id,
+        }
+    }
+}
+
+impl Renderable for AudioClip {
     fn render(
         &self,
         proj: &crate::model::project::ProjectData,
@@ -34,10 +55,8 @@ impl Renderable for Clip {
     ) {
         let block_len: Tick = (buf.len() / channels as usize).into();
         let block_end = block_start + block_len;
-        let ClipData::Audio(audio) = self.data else {
-            panic!("Non-audio clip")
-        };
-        let Some(asset) = proj.assets.get(audio) else {
+
+        let Some(asset) = proj.assets.get(self.asset_id) else {
             panic!("invalid asset");
         };
 

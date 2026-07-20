@@ -12,6 +12,7 @@ mod tests {
     use super::*;
     use crate::engine::assetserver;
     use crate::engine::{AddClip, AddTrack};
+    use crate::model::Audio;
     use crate::model::project::ProjectData;
     use anyhow::Result;
 
@@ -46,24 +47,24 @@ mod tests {
         for _ in 0..12 {
             let clap_track = engine.apply(AddTrack {
                 name: format!("Snap_{inc_snap_start}",),
-                kind: DataKind::Audio,
+                kind: Audio,
             })?;
             let snap_track = engine.apply(AddTrack {
                 name: format!("Clap_{inc_clap_start}"),
-                kind: DataKind::Audio,
+                kind: Audio,
             })?;
 
-            engine.apply(AddClip {
+            engine.apply(AddClip::<Audio> {
                 track: clap_track,
                 start: engine::tick::Tick(inc_clap_start),
                 end: engine::tick::Tick(clap_len),
-                asset: clap_asset,
+                asset_id: clap_asset,
             })?;
-            engine.apply(AddClip {
+            engine.apply(AddClip::<Audio> {
                 track: snap_track,
                 start: engine::tick::Tick(inc_snap_start),
                 end: engine::tick::Tick(snap_len),
-                asset: snap_asset,
+                asset_id: snap_asset,
             })?;
             inc_clap_start += clap_len + snap_len;
             inc_snap_start += clap_len + snap_len;

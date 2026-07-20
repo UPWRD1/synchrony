@@ -1,8 +1,10 @@
 //! Module for Flow related types
+use std::marker::PhantomData;
+
 use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 
-use crate::model::{DataKind, arr::track::TrackID};
+use crate::model::{Audio, Kind, arr::track::AudioTrackID};
 
 new_key_type! {
     pub struct NodeID;
@@ -12,16 +14,16 @@ new_key_type! {
 pub type SocketIndex = usize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Socket {
-    pub kind: DataKind,
+pub struct Socket<K: Kind> {
+    pub kind: PhantomData<K>,
     pub name: String,
     pub visible: bool,
 }
 
-impl Socket {
-    pub fn new(kind: DataKind, name: impl Into<String>, visible: bool) -> Self {
-        Self {
-            kind,
+impl<K: Kind> Socket<K> {
+    pub fn new<C: Kind>(name: impl Into<String>, visible: bool) -> Socket<C> {
+        Socket::<C> {
+            kind: PhantomData,
             name: name.into(),
             visible,
         }
@@ -30,15 +32,15 @@ impl Socket {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
-    pub inputs: Vec<Socket>,
-    pub outputs: Vec<Socket>,
+    pub inputs: Vec<Socket<Audio>>,
+    pub outputs: Vec<Socket<Audio>>,
     pub payload: NodePayload,
 }
 
 impl Node {
     pub fn new(
-        inputs: impl IntoIterator<Item = Socket>,
-        outputs: impl IntoIterator<Item = Socket>,
+        inputs: impl IntoIterator<Item = Socket<Audio>>,
+        outputs: impl IntoIterator<Item = Socket<Audio>>,
         payload: NodePayload,
     ) -> Self {
         Self {
@@ -52,7 +54,7 @@ impl Node {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum NodePayload {
     Native(NativeNodeType),
-    TrackReader(TrackID),
+    AudioTrackReader(AudioTrackID),
     Group(Box<NodeGraph>),
 }
 

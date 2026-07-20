@@ -3,15 +3,35 @@ use std::{path::PathBuf, sync::Arc};
 use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
+use crate::model::{Audio, Kind, Stored};
+
 new_key_type! {
-    pub struct AssetID;
+    pub struct AudioAssetID;
 }
 
+pub trait Asset<K: Kind> {}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Asset {
+pub struct AudioAsset {
     #[serde(skip)]
     pub samples: Arc<Vec<f32>>,
     pub gain: f32,
     pub channels: u16,
     pub path: PathBuf,
 }
+
+impl Stored for AudioAsset {
+    type Id = AudioAssetID;
+
+    fn access(project: &super::project::ProjectData) -> &slotmap::SlotMap<Self::Id, Self> {
+        &project.assets
+    }
+
+    fn access_mut(
+        project: &mut super::project::ProjectData,
+    ) -> &mut slotmap::SlotMap<Self::Id, Self> {
+        &mut project.assets
+    }
+}
+
+impl Asset<Audio> for AudioAsset {}
