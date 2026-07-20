@@ -8,9 +8,9 @@ use std::sync::{Arc, atomic::AtomicU64};
 pub use crate::engine::command::*;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 use crate::model::{
-    DataKind, Renderable,
+    DataKind,
     asset::{AudioAsset, AudioAssetID},
-    flow::{NativeNodeType, NodeID, NodePayload},
+    flow::NodeID,
     project::ProjectData,
 };
 
@@ -139,7 +139,7 @@ pub fn execute_block<'a>(
 ) -> &'a [f32] {
     // assert_no_alloc(|| {
 
-    // Clear the pool. Do it unless you want to summon demons.
+    // Clear the pool. Unless you want to summon demons.
     pool.clear();
 
     let mut executor = pool.executor();
@@ -161,47 +161,18 @@ pub fn execute_block<'a>(
                 }
             }
         }
-
-        process_node(
-            &node.payload,
+        node.process(
             project,
+            &mut executor,
             block_start,
             channels,
             &step.input_slots,
             &step.output_slots,
-            &mut executor,
         );
     }
 
     executor.get_input(schedule.master_output_slot)
     // })
-}
-
-fn process_node(
-    payload: &NodePayload,
-    project: &ProjectData,
-    block_start: Tick,
-    channels: u16,
-    inputs: &[SlotIndex],
-    outputs: &[SlotIndex],
-    pool: &mut PoolExecutor,
-) {
-    match payload {
-        NodePayload::AudioTrackReader(track_id) => {
-            if let Some(track) = project.tracks.get(*track_id) {
-                let output_buf = pool.get_output(outputs[0]);
-                track.render(project, output_buf, block_start, channels);
-            }
-        }
-        NodePayload::Native(NativeNodeType::Master) => {
-            let input_buf = pool.get_input(inputs[0]);
-            let output_buf = pool.get_output(outputs[0]);
-
-            output_buf.copy_from_slice(input_buf);
-        }
-        NodePayload::Native(_other) => unimplemented!("native node type not wired up yet"),
-        NodePayload::Group(_) => unimplemented!("group inlining not implemented yet"),
-    }
 }
 
 /// What the audio thread reads. Today this is "the whole Project plus its

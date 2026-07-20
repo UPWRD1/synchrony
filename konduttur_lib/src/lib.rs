@@ -19,7 +19,6 @@ mod tests {
     use std::sync::Arc;
 
     use engine::Engine;
-    use model::DataKind;
     #[test]
     fn it_works() {
         helper();

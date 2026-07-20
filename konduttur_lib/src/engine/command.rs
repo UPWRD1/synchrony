@@ -3,7 +3,7 @@ use crate::{
     model::{
         Kind, Stored,
         arr::{clip::AudioClipID, track::AudioTrackID},
-        flow::{NodeID, SocketIndex},
+        flow::{Node, NodeID, SocketIndex, TrackReader},
         project::ProjectData,
     },
 };
@@ -18,7 +18,10 @@ pub struct AddTrack<K: Kind> {
     pub kind: K,
 }
 
-impl<K: Kind> Command for AddTrack<K> {
+impl<K: Kind> Command for AddTrack<K>
+where
+    TrackReader<K>: Node,
+{
     type Output = <K::Track as Stored>::Id;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
         project.add_track::<K>(self.name)

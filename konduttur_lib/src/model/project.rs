@@ -10,15 +10,16 @@ use crate::{
         },
         asset::{AudioAsset, AudioAssetID},
         flow::{
-            Link, LinkID, NativeNodeType, Node, NodeGraph, NodeID, NodePayload, Socket, SocketIndex,
+            Link, LinkID, Master, Node, NodeGraph, NodeID, Socket, SocketIndex, SocketKind,
+            TrackReader,
         },
     },
 };
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+
 use slotmap::SlotMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct ProjectData {
     pub tracks: SlotMap<AudioTrackID, AudioTrack>,
     pub clips: SlotMap<AudioClipID, AudioClip>,
@@ -31,12 +32,8 @@ impl ProjectData {
     pub fn new() -> Self {
         let mut graph = NodeGraph::default();
 
-        let master_node = Node::new(
-            vec![Socket::<Audio>::new("in", true)],
-            vec![Socket::<Audio>::new("out", false)],
-            NodePayload::Native(NativeNodeType::Master),
-        );
-        let master_node_id = graph.nodes.insert(master_node);
+        let master_node = Master::new();
+        let master_node_id = graph.nodes.insert(Box::new(master_node));
         Self {
             tracks: SlotMap::with_key(),
             clips: SlotMap::with_key(),
@@ -131,16 +128,14 @@ impl ProjectData {
         Ok(())
     }
 
-    pub fn add_track<K: Kind>(&mut self, name: String) -> Result<<K::Track as Stored>::Id> {
-        let mut tracks = K::Track::access_mut(self);
-        let track_id = tracks.insert(K::Track::new(name));
-        let node = Node::new(
-            vec![],
-            vec![Socket::new("out", true)],
-            NodePayload::AudioTrackReader(track_id),
-        );
-        let node_id = self.graph.nodes.insert(node);
-        *tracks[track_id].linked_node_id_mut() = Some(node_id);
+    pub fn add_track<K: Kind>(&mut self, name: String) -> Result<<K::Track as Stored>::Id>
+    where
+        TrackReader<K>: Node,
+    {
+        let track_id = K::Track::access_mut(self).insert(K::Track::new(name));
+        let reader_node = TrackReader::<K>::new(track_id);
+        let node_id = self.graph.nodes.insert(Box::new(reader_node));
+        *K::Track::access_mut(self)[track_id].linked_node_id_mut() = Some(node_id);
 
         // Convenience default: new tracks route straight to master.
         // Same AddLink path a user rewiring Flow view would go through.
@@ -156,19 +151,19 @@ impl ProjectData {
         &self,
         endpoint: (NodeID, SocketIndex),
         is_output: bool,
-    ) -> Result<DataKind> {
+    ) -> Result<&SocketKind> {
         let node = self
             .graph
             .nodes
             .get(endpoint.0)
             .ok_or(EngineError::NodeNotFound(endpoint.0))?;
         let list = if is_output {
-            &node.outputs
+            node.outputs_mut()
         } else {
-            &node.inputs
+            node.inputs_mut()
         };
         list.get(endpoint.1 as usize)
-            .map(|s| s.kind)
+            .map(|s| s)
             .ok_or(EngineError::NodeNotFound(endpoint.0).into())
     }
 
@@ -272,7 +267,7 @@ impl ProjectData {
                 }
             }
 
-            let output_slots: Vec<SlotIndex> = (0..node.outputs.len())
+            let output_slots: Vec<SlotIndex> = (0..node.audio_outputs_mut().len())
                 .map(|i| output_slot[&(node_id, i as SocketIndex)])
                 .collect();
 
