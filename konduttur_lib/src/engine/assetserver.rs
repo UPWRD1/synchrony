@@ -85,10 +85,10 @@ pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<AudioAsset> {
 
                 // Copy the audio samples from the generic audio buffer to the vector in interleaved
                 // order. The sample format to convert to is inferred from the type of the Vec.
-                audio_buf.copy_to_slice_interleaved(&mut scratch);
-                samples.append(&mut scratch);
                 // Sum up the total number of samples.
                 total_sample_count += scratch.len();
+                audio_buf.copy_to_slice_interleaved(&mut scratch);
+                samples.append(&mut scratch);
                 print!("\rDecoded {total_sample_count} samples");
             }
             Err(Error::DecodeError(_)) => (),

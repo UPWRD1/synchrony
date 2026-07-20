@@ -35,7 +35,7 @@ impl Socket {
 }
 
 pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
-    fn inputs<'a>(&'a self) -> &'a [Socket];
+    fn inputs(&self) -> &[Socket];
     fn outputs(&self) -> &[Socket];
 
     fn process(
@@ -52,9 +52,7 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
 dyn_clone::clone_trait_object!(Node);
 
 #[derive(Debug, Clone)]
-pub struct Master {
-    input: Socket,
-}
+pub struct Master;
 
 impl Master {
     const INPUTS: &'static [Socket] = &[Socket {
@@ -63,12 +61,11 @@ impl Master {
         visible: true,
     }];
 
-    const OUTPUTS: &'static [Socket] = &[];
-    pub fn new() -> Self {
-        Self {
-            input: Socket::new::<Audio>("input", true),
-        }
-    }
+    const OUTPUTS: &'static [Socket] = &[Socket {
+        kind: DataKind::Audio,
+        name: "output",
+        visible: false,
+    }];
 }
 
 impl Node for Master {
@@ -81,10 +78,10 @@ impl Node for Master {
     }
     fn process(
         &self,
-        project: &ProjectData,
+        _: &ProjectData,
         pool: &mut PoolExecutor,
-        block_start: Tick,
-        channels: u16,
+        _: Tick,
+        _: u16,
         inputs: &Vec<SlotIndex>,
         outputs: &Vec<SlotIndex>,
     ) {
@@ -98,7 +95,6 @@ impl Node for Master {
 #[derive(Debug, Clone)]
 pub struct TrackReader<K: Kind> {
     kind: PhantomData<K>,
-    output: Socket,
     id: <K::Track as Stored>::Id,
 }
 
@@ -106,10 +102,17 @@ impl<K: Kind> TrackReader<K> {
     pub fn new(id: <K::Track as Stored>::Id) -> Self {
         Self {
             kind: PhantomData,
-            output: Socket::new::<K>("audio out", true),
             id,
         }
     }
+}
+
+impl TrackReader<Audio> {
+    const OUTPUTS: &'static [Socket] = &[Socket {
+        name: "audio out",
+        kind: DataKind::Audio,
+        visible: true,
+    }];
 }
 
 impl Node for TrackReader<Audio> {
@@ -119,7 +122,7 @@ impl Node for TrackReader<Audio> {
         pool: &mut PoolExecutor,
         block_start: Tick,
         channels: u16,
-        inputs: &Vec<SlotIndex>,
+        _: &Vec<SlotIndex>,
         outputs: &Vec<SlotIndex>,
     ) {
         if let Some(track) = project.tracks.get(self.id) {
@@ -128,12 +131,12 @@ impl Node for TrackReader<Audio> {
         }
     }
 
-    fn inputs<'a>(&'a self) -> &'a [Socket] {
-        todo!()
+    fn inputs(&self) -> &[Socket] {
+        &[]
     }
 
     fn outputs(&self) -> &[Socket] {
-        todo!()
+        Self::OUTPUTS
     }
 }
 

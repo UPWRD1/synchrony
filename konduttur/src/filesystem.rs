@@ -2,8 +2,6 @@ use std::{fs::File, io::Read, path::Path};
 
 use anyhow::Result;
 use konduttur_lib::model::project::ProjectData;
-use rmp_serde::Serializer;
-use serde::Serialize;
 
 fn save_project_data(proj: ProjectData, path: &Path) -> Result<()> {
     let mut file = File::create(path)?;

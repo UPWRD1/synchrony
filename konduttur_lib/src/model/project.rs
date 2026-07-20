@@ -30,7 +30,7 @@ impl ProjectData {
     pub fn new() -> Self {
         let mut graph = NodeGraph::default();
 
-        let master_node = Master::new();
+        let master_node = Master;
         let master_node_id = graph.nodes.insert(Box::new(master_node));
         Self {
             tracks: SlotMap::with_key(),
