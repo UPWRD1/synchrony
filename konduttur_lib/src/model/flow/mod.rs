@@ -67,7 +67,7 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
     /// audio thread (control thread, inside `publish_current`) and handed
     /// over pre-built. Nodes with no runtime state (Master, TrackReader)
     /// use the default.
-    fn init_state(&self) -> Box<dyn Any + Send> {
+    fn init_state(&self, _channels: u16) -> Box<dyn Any + Send> {
         Box::new(())
     }
 
@@ -75,6 +75,7 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
         &self,
         project: &ProjectData,
         pool: &mut PoolExecutor,
+        state: &mut dyn Any,
         block_start: Tick,
         config: &EngineConfig,
         inputs: &[SlotIndex],

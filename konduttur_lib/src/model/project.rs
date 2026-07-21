@@ -78,20 +78,19 @@ impl ProjectData {
         Ok(link_id)
     }
 
-    pub fn move_clip(
+    pub fn move_clip<K: Kind>(
         &mut self,
-        track: AudioTrackID,
-        clip: AudioClipID,
+        track: <K::Track as Stored>::Id,
+        clip: <K::Clip as Stored>::Id,
         new_start: Tick,
     ) -> Result<()> {
-        let track = self
-            .tracks
+        let track = K::Track::access_mut(self)
             .get_mut(track)
             .ok_or(EngineError::TrackNotFound)?;
-        track.clips.retain(|_, &mut id| id != clip);
-        track.clips.insert(new_start, clip);
-        if let Some(c) = self.clips.get_mut(clip) {
-            c.start = new_start;
+        track.clips_mut().retain(|_, &mut id| id != clip);
+        track.clips_mut().insert(new_start, clip);
+        if let Some(c) = K::Clip::access_mut(self).get_mut(clip) {
+            *c.start_mut() = new_start;
         }
         Ok(())
     }
@@ -136,15 +135,11 @@ impl ProjectData {
         let reader_node = TrackReader::<K>::new(track_id);
         let node_id = self.graph.nodes.insert(Box::new(reader_node));
         *K::Track::access_mut(self)[track_id].linked_node_id_mut() = Some(node_id);
-
-        // Convenience default: new tracks route straight to master.
-        // Same AddLink path a user rewiring Flow view would go through.
-        let master = self.master_node_id;
-        self.graph.links.insert(Link {
-            from: (node_id, 0),
-            to: (master, 0),
-        });
         Ok(track_id)
+    }
+
+    pub fn add_node<N: Node>(&mut self, node: N) -> NodeID {
+        self.graph.nodes.insert(Box::new(node))
     }
 
     pub fn socket_kind_of(
@@ -176,6 +171,7 @@ impl ProjectData {
     fn topo_sort(&self) -> Result<Vec<NodeID>> {
         let mut in_degree: HashMap<NodeID, usize> =
             self.graph.nodes.keys().map(|id| (id, 0)).collect();
+
         for link in self.graph.links.values() {
             *in_degree
                 .get_mut(&link.to.0)

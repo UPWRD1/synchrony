@@ -12,6 +12,8 @@ new_key_type! {
 
 pub trait Clip<K: Kind>: Sized + Serialize + DeserializeOwned {
     fn new(start: Tick, length: Tick, asset_id: <K::Asset as Stored>::Id) -> Self;
+
+    fn start_mut(&mut self) -> &mut Tick;
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -42,6 +44,10 @@ impl Clip<Audio> for AudioClip {
             length,
             asset_id,
         }
+    }
+
+    fn start_mut(&mut self) -> &mut Tick {
+        &mut self.start
     }
 }
 

@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, engineconfig::EngineConfig, tick::Tick},
     model::{
@@ -36,6 +38,7 @@ impl Node for Master {
         &self,
         _: &ProjectData,
         pool: &mut PoolExecutor,
+        _: &mut dyn Any,
         _: Tick,
         _: &EngineConfig,
         inputs: &[SlotIndex],

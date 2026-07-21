@@ -3,6 +3,7 @@ use std::sync::Arc;
 use cpal::{Device, Host};
 use cpal::{SampleFormat, StreamConfig};
 
+#[derive(Clone)]
 pub struct EngineConfig {
     pub host: Arc<Host>,
     pub device: Arc<Device>,
@@ -23,7 +24,9 @@ impl EngineConfig {
         let sample_rate = supported.sample_rate();
         let channels = supported.channels();
         let config: StreamConfig = supported.into();
-        println!("output device config: {sample_rate} Hz, {channels} ch, format {sample_format:?}");
+        println!(
+            "output device config: sr: {sample_rate} Hz, {channels} ch, format {sample_format:?}"
+        );
         Ok(Self {
             host,
             device,

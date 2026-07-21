@@ -10,10 +10,12 @@ static A: AllocDisabler = AllocDisabler;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::assetserver;
-    use crate::engine::{AddClip, AddTrack};
-    use crate::model::Audio;
+    use crate::engine::{AddClip, AddLink, AddTrack};
+    use crate::engine::{AddNode, assetserver};
+    use crate::model::flow::Param;
+    use crate::model::flow::nodes::lowpass::LowpassFilter;
     use crate::model::project::ProjectData;
+    use crate::model::{Audio, Stored};
     use anyhow::Result;
 
     use std::sync::Arc;
@@ -25,49 +27,66 @@ mod tests {
     }
 
     fn helper() -> Result<()> {
-        let project = Arc::new(ProjectData::new());
-
         // --- 2. Build the project through the real API, not by hand --------
-        let mut engine = Engine::new(project)?;
+        let mut engine = {
+            let project = Arc::new(ProjectData::new());
+            Engine::new(project)?
+        };
+        let master_node_id = engine.project().master_node_id;
+        let song_asset = engine.load_asset(assetserver::load_audio_asset(
+            "./assets/AUDIO_4892.mp3",
+            engine.sample_rate(),
+        )?);
 
-        let clap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/clap.mp3")?);
-        let snap_asset = engine.load_asset(assetserver::load_audio_asset("./assets/snap.mp3")?);
-
-        let clap_len = {
-            let asset = &engine.project().assets[clap_asset];
+        let song_len = {
+            let asset = &engine.project().assets[song_asset];
             asset.samples.len() as u64 / asset.channels as u64
         };
-        let snap_len = {
-            let asset = &engine.project().assets[snap_asset];
-            asset.samples.len() as u64 / asset.channels as u64
-        };
-        let mut inc_clap_start = 0;
-        let mut inc_snap_start = clap_len;
-        for _ in 0..12 {
-            let clap_track = engine.apply(AddTrack {
-                name: format!("Snap_{inc_snap_start}",),
-                kind: Audio,
-            })?;
-            let snap_track = engine.apply(AddTrack {
-                name: format!("Clap_{inc_clap_start}"),
-                kind: Audio,
-            })?;
 
-            engine.apply(AddClip::<Audio> {
-                track: clap_track,
-                start: engine::tick::Tick(inc_clap_start),
-                end: engine::tick::Tick(clap_len),
-                asset_id: clap_asset,
-            })?;
-            engine.apply(AddClip::<Audio> {
-                track: snap_track,
-                start: engine::tick::Tick(inc_snap_start),
-                end: engine::tick::Tick(snap_len),
-                asset_id: snap_asset,
-            })?;
-            inc_clap_start += clap_len + snap_len;
-            inc_snap_start += clap_len + snap_len;
-        }
+        let lowpass = engine.apply(AddNode {
+            node: LowpassFilter {
+                cutoff_hz: Param::new(1200.0),
+            },
+        })?;
+
+        engine.apply(AddLink {
+            from: (lowpass, LowpassFilter::AUDIO_IN),
+            to: (engine.project().master_node_id, 0),
+        })?;
+
+        let song_track = engine.apply(AddTrack {
+            name: "Song".to_string(),
+            kind: Audio,
+        })?;
+
+        let song_node = engine
+            .project()
+            .tracks
+            .get(song_track)
+            .unwrap()
+            .linked_node_id
+            .unwrap();
+
+        engine.apply(AddLink {
+            from: (song_node, 0),
+            to: (master_node_id, 0),
+        })?;
+
+        engine.apply(AddClip::<Audio> {
+            track: song_track,
+            start: engine::tick::Tick(0),
+            end: engine::tick::Tick(song_len),
+            asset_id: song_asset,
+        })?;
+
+        engine
+            .playhead
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+
+        // inc_clap_start += clap_len + snap_len;
+        // inc_snap_start += clap_len + snap_len;
+
+        dbg!(&engine.project().graph);
 
         engine.transport.play();
         println!("Playing... press enter to quit");

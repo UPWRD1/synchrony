@@ -7,6 +7,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::model::asset::AudioAsset;
+
+use audioadapter_buffers::direct::InterleavedSlice;
+use rubato::{
+    Async, FixedAsync, Indexing, PolynomialDegree, Resampler, SincInterpolationParameters,
+    SincInterpolationType, WindowFunction,
+};
+
 use symphonia::core::{
     audio::sample::Sample,
     codecs::audio::AudioDecoderOptions,
@@ -16,7 +23,7 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 
-pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<AudioAsset> {
+pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Result<AudioAsset> {
     let path = path.into();
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.
@@ -42,6 +49,14 @@ pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<AudioAsset> {
     // Get the default audio track.
     let track = format.default_track(TrackType::Audio).unwrap();
 
+    let source_sample_rate = track
+        .codec_params
+        .as_ref()
+        .unwrap()
+        .audio()
+        .unwrap()
+        .sample_rate
+        .unwrap_or(target_sample_rate); // no rate in the stream -> assume it matches; can't do better
     // Create a decoder for the track.
     let mut decoder = symphonia::default::get_codecs()
         .make_audio_decoder(
@@ -98,7 +113,48 @@ pub fn load_audio_asset(path: impl Into<PathBuf>) -> Result<AudioAsset> {
     Ok(AudioAsset {
         samples: Arc::new(samples),
         channels,
+        sample_rate: target_sample_rate,
         gain: 20.0,
         path,
     })
+}
+
+/// Sinc-interpolated resample of interleaved f32 samples, with proper
+/// anti-aliasing filtering. Import-time only — never called from the
+/// audio thread, so the allocations inside rubato's `process()` are fine.
+fn resample_rubato(
+    interleaved: &[f32],
+    channels: u16,
+    from_rate: u32,
+    to_rate: u32,
+) -> Result<Vec<f32>> {
+    if from_rate == to_rate || interleaved.is_empty() {
+        return Ok(interleaved.to_vec());
+    }
+    let channels = channels as usize;
+    let frame_count = interleaved.len() / channels;
+    let f_ratio = from_rate as f64 / to_rate as f64;
+
+    let mut outdata: Vec<f32> = vec![0.0; 2 * channels * (frame_count as f64 * f_ratio) as usize];
+    let outdata_capacity = outdata.len() / channels;
+
+    let input_adapter = InterleavedSlice::new(interleaved, channels, frame_count).unwrap();
+    let mut output_adapter =
+        InterleavedSlice::new_mut(&mut outdata, channels, outdata_capacity).unwrap();
+    let mut resampler = {
+        let sinc_len = 128;
+        let oversampling_factor = 256;
+        let interpolation = SincInterpolationType::Quadratic;
+        let window = WindowFunction::Blackman2;
+
+        let params = SincInterpolationParameters::new(sinc_len, window)
+            .oversampling_factor(oversampling_factor)
+            .interpolation(interpolation);
+        Async::<f32>::new_sinc(f_ratio, 1.1, &params, 1024, channels, FixedAsync::Input).unwrap()
+    };
+
+    let _ = resampler
+        .process_all_into_buffer(&input_adapter, &mut output_adapter, frame_count, None)
+        .unwrap();
+    Ok(outdata)
 }

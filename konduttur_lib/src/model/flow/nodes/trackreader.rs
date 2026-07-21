@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{any::Any, marker::PhantomData};
 
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, engineconfig::EngineConfig, tick::Tick},
@@ -37,6 +37,7 @@ impl Node for TrackReader<Audio> {
         &self,
         project: &ProjectData,
         pool: &mut PoolExecutor,
+        _: &mut dyn Any,
         block_start: Tick,
         config: &EngineConfig,
         _: &[SlotIndex],

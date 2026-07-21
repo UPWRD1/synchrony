@@ -118,6 +118,7 @@ pub fn execute_block<'a>(
         node.process(
             project,
             &mut executor,
+            state_pool.get_mut(step.node_id),
             block_start,
             config,
             &step.input_slots,
@@ -175,11 +176,12 @@ impl Transport {
 pub struct Engine {
     pub transport: Arc<Transport>,
     pub playhead: Arc<AtomicU64>,
+    config: EngineConfig,
     current: Arc<ProjectData>,
     undo_stack: Vec<Arc<ProjectData>>,
     redo_stack: Vec<Arc<ProjectData>>,
     update_tx: rtrb::Producer<GraphUpdate>,
-    stream: cpal::Stream,
+    _stream: cpal::Stream,
 }
 
 pub const MAX_BUFFER_SLOTS: usize = 4096;
@@ -188,9 +190,7 @@ impl Engine {
         use cpal::traits::{DeviceTrait, StreamTrait};
 
         let config = EngineConfig::create()?;
-        let sample_rate = config.config.sample_rate;
         let channels = config.config.channels;
-
         let schedule = project
             .compile_graph()
             .expect("fresh project graph is always acyclic");
@@ -203,7 +203,7 @@ impl Engine {
             .graph
             .nodes
             .iter()
-            .map(|(id, node)| (id, node.init_state()))
+            .map(|(id, node)| (id, node.init_state(channels)))
             .collect();
 
         let (mut update_tx, update_rx) = rtrb::RingBuffer::<GraphUpdate>::new(UPDATE_RING_CAPACITY);
@@ -233,7 +233,7 @@ impl Engine {
         let playhead = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
         let stream = Self::build_stream::<f32>(
-            config,
+            config.clone(),
             transport.clone(),
             playhead.clone(),
             update_rx,
@@ -242,13 +242,14 @@ impl Engine {
         stream.play()?; // device stream runs continuously; transport gates output
 
         Ok(Self {
+            config,
             playhead,
             transport,
             current: project,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             update_tx,
-            stream,
+            _stream: stream,
         })
     }
 
@@ -256,6 +257,9 @@ impl Engine {
         &self.current
     }
 
+    pub fn sample_rate(&self) -> u32 {
+        self.config.config.sample_rate
+    }
     /// Not a Command on purpose — asset import is I/O-bound and, unlike
     /// graph/clip edits, isn't meaningfully undo-able in the same sense.
     /// A real engine would still route this through some queue so it
@@ -327,7 +331,12 @@ impl Engine {
 
         let state_additions: Vec<_> = new_ids
             .difference(&old_ids)
-            .map(|&id| (id, self.current.graph.nodes[id].init_state()))
+            .map(|&id| {
+                (
+                    id,
+                    self.current.graph.nodes[id].init_state(self.config.config.channels),
+                )
+            })
             .collect();
         let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
 
@@ -356,9 +365,6 @@ impl Engine {
         Ok(())
     }
 
-    pub fn transport(&mut self, state: TransportState) {
-        todo!()
-    }
     fn build_stream<T>(
         config: EngineConfig,
         transport: Arc<Transport>,
@@ -379,43 +385,45 @@ impl Engine {
         let stream = device.build_output_stream(
             config.config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
-                // Tier 1: drain any pending structural updates. Zero
-                // allocation: everything was pre-built off-thread.
-                while let Ok(mut update) = update_rx.pop() {
-                    state_pool.apply(&mut update, &mut garbage_tx);
-                    if let Some(old) = current.replace(update) {
-                        let _ = garbage_tx.push(Garbage::Update(old));
+                assert_no_alloc::assert_no_alloc(|| {
+                    // Tier 1: drain any pending structural updates. Zero
+                    // allocation: everything was pre-built off-thread.
+                    while let Ok(mut update) = update_rx.pop() {
+                        state_pool.apply(&mut update, &mut garbage_tx);
+                        if let Some(old) = current.replace(update) {
+                            let _ = garbage_tx.push(Garbage::Update(old));
+                        }
                     }
-                }
 
-                let frame_count = data.len() / config.config.channels as usize;
-                let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
+                    let frame_count = data.len() / config.config.channels as usize;
+                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
-                if !transport.is_playing() {
-                    data.fill(T::from_sample(0.0));
-                    return;
-                }
+                    if !transport.is_playing() {
+                        data.fill(T::from_sample(0.0));
+                        return;
+                    }
 
-                let Some(GraphUpdate {
-                    project, schedule, ..
-                }) = current.as_ref()
-                else {
-                    data.fill(T::from_sample(0.0));
-                    return;
-                };
+                    let Some(GraphUpdate {
+                        project, schedule, ..
+                    }) = current.as_ref()
+                    else {
+                        data.fill(T::from_sample(0.0));
+                        return;
+                    };
 
-                let mixed = execute_block(
-                    schedule,
-                    project,
-                    Tick(start),
-                    &config,
-                    &mut buffer_pool,
-                    &mut state_pool,
-                );
+                    let mixed = execute_block(
+                        schedule,
+                        project,
+                        Tick(start),
+                        &config,
+                        &mut buffer_pool,
+                        &mut state_pool,
+                    );
 
-                for (dst, &src) in data.iter_mut().zip(mixed) {
-                    *dst = T::from_sample(src);
-                }
+                    for (dst, &src) in data.iter_mut().zip(mixed) {
+                        *dst = T::from_sample(src);
+                    }
+                })
             },
             move |err| eprintln!("audio stream error: {err}"),
             None,
