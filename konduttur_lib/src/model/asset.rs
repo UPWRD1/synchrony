@@ -9,15 +9,40 @@ new_key_type! {
     pub struct AudioAssetID;
 }
 
-pub trait Asset<K: Kind> {}
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub enum AssetState<Data> {
+    #[default]
+    Pending,
+    #[serde(skip)]
+    Ready(Data),
+    Failed,
+}
 
+pub trait Asset<K: Kind> {
+    type Data;
+    fn new(path: PathBuf) -> Self;
+    fn state(&self) -> &AssetState<Self::Data>;
+    fn state_mut(&mut self) -> &mut AssetState<Self::Data>;
+    fn data(&self) -> Option<&Self::Data> {
+        match self.state() {
+            AssetState::Ready(data) => Some(data),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioAssetData {
+    #[serde(skip)]
+    pub samples: Arc<Vec<f32>>,
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub gain: f32,
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioAsset {
     #[serde(skip)]
-    pub samples: Arc<Vec<f32>>,
-    pub gain: f32,
-    pub sample_rate: u32,
-    pub channels: u16,
+    pub state: AssetState<AudioAssetData>,
     pub path: PathBuf,
 }
 
@@ -35,4 +60,19 @@ impl Stored for AudioAsset {
     }
 }
 
-impl Asset<Audio> for AudioAsset {}
+impl Asset<Audio> for AudioAsset {
+    type Data = AudioAssetData;
+    fn state(&self) -> &AssetState<Self::Data> {
+        &self.state
+    }
+    fn state_mut(&mut self) -> &mut AssetState<Self::Data> {
+        &mut self.state
+    }
+
+    fn new(path: PathBuf) -> Self {
+        Self {
+            state: AssetState::Pending,
+            path,
+        }
+    }
+}

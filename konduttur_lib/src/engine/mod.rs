@@ -5,7 +5,7 @@ pub mod engineconfig;
 pub mod state;
 pub mod tick;
 
-use std::any::Any;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, atomic::AtomicU64};
 
@@ -15,6 +15,8 @@ use crate::engine::state::{
     GARBAGE_RING_CAPACITY, Garbage, GraphUpdate, MAX_NODES, NodeStatePool, UPDATE_RING_CAPACITY,
 };
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
+use crate::model::Audio;
+use crate::model::asset::AudioAssetData;
 use crate::model::{
     DataKind,
     asset::{AudioAsset, AudioAssetID},
@@ -23,7 +25,6 @@ use crate::model::{
 };
 
 use anyhow::Result;
-use slotmap::SecondaryMap;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------
@@ -73,14 +74,6 @@ impl std::fmt::Display for EngineError {
 // ---------------------------------------------------------------------
 // Execution — runs once per audio callback
 // ---------------------------------------------------------------------
-
-struct AudioResources {
-    current: Option<GraphUpdate>, // holds the live Arcs
-    state_pool: SecondaryMap<NodeID, Box<dyn Any + Send>>, // with_capacity(MAX_NODES)
-    buffer_pool: BlockBufferPool, // sized once, generously
-    updates_rx: rtrb::Consumer<GraphUpdate>,
-    trash_tx: rtrb::Producer<Box<dyn Any + Send>>,
-}
 
 /// Runs the compiled schedule for one block and returns the master mix.
 pub fn execute_block<'a>(
@@ -172,6 +165,10 @@ impl Transport {
         self.0.load(Ordering::Relaxed) == TransportState::Playing as u8
     }
 }
+struct LoadResult {
+    id: AudioAssetID,
+    result: Result<AudioAssetData, String>,
+}
 
 pub struct Engine {
     pub transport: Arc<Transport>,
@@ -181,13 +178,16 @@ pub struct Engine {
     undo_stack: Vec<Arc<ProjectData>>,
     redo_stack: Vec<Arc<ProjectData>>,
     update_tx: rtrb::Producer<GraphUpdate>,
+
+    load_tx: std::sync::mpsc::Sender<LoadResult>,
+    load_rx: std::sync::mpsc::Receiver<LoadResult>,
     _stream: cpal::Stream,
 }
 
 pub const MAX_BUFFER_SLOTS: usize = 4096;
 impl Engine {
     pub fn new(project: Arc<ProjectData>) -> Result<Self> {
-        use cpal::traits::{DeviceTrait, StreamTrait};
+        use cpal::traits::StreamTrait;
 
         let config = EngineConfig::create()?;
         let channels = config.config.channels;
@@ -232,6 +232,8 @@ impl Engine {
         let transport = Arc::new(Transport::default());
         let playhead = Arc::new(std::sync::atomic::AtomicU64::new(0));
 
+        let (load_tx, load_rx) = std::sync::mpsc::channel();
+
         let stream = Self::build_stream::<f32>(
             config.clone(),
             transport.clone(),
@@ -249,6 +251,8 @@ impl Engine {
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             update_tx,
+            load_tx,
+            load_rx,
             _stream: stream,
         })
     }
@@ -260,15 +264,26 @@ impl Engine {
     pub fn sample_rate(&self) -> u32 {
         self.config.config.sample_rate
     }
-    /// Not a Command on purpose — asset import is I/O-bound and, unlike
-    /// graph/clip edits, isn't meaningfully undo-able in the same sense.
-    /// A real engine would still route this through some queue so it
-    /// doesn't block the caller, but it's direct here for clarity.
-    pub fn load_asset(&mut self, asset: AudioAsset) -> AudioAssetID {
-        let mut next = (*self.current).clone();
-        let id = next.assets.insert(asset);
-        self.commit(next);
-        id
+
+    pub fn request_load_asset(&mut self, path: impl Into<PathBuf>) -> Result<AudioAssetID> {
+        let path = path.into();
+        let id = self.apply(RequestLoadAsset::<Audio>::new(&path))?; // Pending slot exists immediately
+
+        let tx = self.load_tx.clone();
+        let target_rate = self.sample_rate();
+        std::thread::spawn(move || {
+            let result =
+                assetserver::load_audio_assetdata(&path, target_rate).map_err(|e| e.to_string());
+            let _ = tx.send(LoadResult { id, result });
+        });
+
+        Ok(id) // caller already has a usable AudioAssetID, e.g. to build a clip with, before decode finishes
+    }
+
+    pub fn poll_asset_loads(&mut self) {
+        while let Ok(LoadResult { id, result }) = self.load_rx.try_recv() {
+            let _ = self.apply(FinishAssetLoad { id, result });
+        }
     }
 
     pub fn apply<T>(&mut self, cmd: T) -> Result<T::Output>
@@ -396,12 +411,12 @@ impl Engine {
                     }
 
                     let frame_count = data.len() / config.config.channels as usize;
-                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
                     if !transport.is_playing() {
                         data.fill(T::from_sample(0.0));
                         return;
                     }
+                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
                     let Some(GraphUpdate {
                         project, schedule, ..

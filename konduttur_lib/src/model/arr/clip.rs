@@ -3,7 +3,10 @@ use slotmap::new_key_type;
 
 use crate::{
     engine::{engineconfig::EngineConfig, tick::Tick},
-    model::{Audio, Kind, Renderable, Stored, asset::AudioAssetID},
+    model::{
+        Audio, Kind, Renderable, Stored,
+        asset::{AssetState, AudioAssetID},
+    },
 };
 
 new_key_type! {
@@ -59,14 +62,17 @@ impl Renderable for AudioClip {
         block_start: Tick,
         config: &EngineConfig,
     ) {
-        let channels = config.config.channels;
-        let block_len: Tick = (buf.len() / channels as usize).into();
-
-        let block_end = block_start + block_len;
-
         let Some(asset) = proj.assets.get(self.asset_id) else {
-            panic!("invalid asset");
+            return;
         };
+        let AssetState::Ready(data) = &asset.state else {
+            return;
+        };
+
+        let channels = config.config.channels;
+
+        let block_len: Tick = (buf.len() / channels as usize).into();
+        let block_end = block_start + block_len;
 
         let clip_end = self.start + self.length;
         let overlap_start = block_start.max(self.start);
@@ -75,15 +81,15 @@ impl Renderable for AudioClip {
             panic!("eventually figure out what goes here");
         }
         for frame in (overlap_start.0)..overlap_end.0 {
-            let src_idx = ((frame - self.start.0) as usize) * asset.channels as usize;
+            let src_idx = ((frame - self.start.0) as usize) * data.channels as usize;
             let dst_idx = ((frame - block_start.0) as usize) * channels as usize;
             for ch in 0..channels as usize {
-                let src_ch = ch.min(asset.channels as usize - 1);
+                let src_ch = ch.min(data.channels as usize - 1);
                 if let (Some(&sample), Some(dest)) = (
-                    asset.samples.get(src_idx + src_ch),
+                    data.samples.get(src_idx + src_ch),
                     buf.get_mut(dst_idx + ch),
                 ) {
-                    *dest += sample * asset.gain;
+                    *dest += sample * data.gain;
                 }
             }
         }

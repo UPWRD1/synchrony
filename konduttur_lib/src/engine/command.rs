@@ -1,7 +1,10 @@
+use std::{marker::PhantomData, path::PathBuf};
+
 use crate::{
     engine::tick::Tick,
     model::{
         Kind, Stored,
+        asset::{Asset, AssetState},
         flow::{LinkID, Node, NodeID, SocketIndex, nodes::trackreader::TrackReader},
         project::ProjectData,
     },
@@ -95,5 +98,43 @@ impl Command for RemoveLink {
     type Output = ();
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
         project.remove_link(self.from, self.to)
+    }
+}
+
+pub struct RequestLoadAsset<K: Kind> {
+    path: PathBuf,
+    _k: PhantomData<K>,
+}
+impl<K: Kind> RequestLoadAsset<K> {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            _k: PhantomData::<K>,
+        }
+    }
+}
+
+impl<K: Kind> Command for RequestLoadAsset<K> {
+    type Output = <K::Asset as Stored>::Id;
+
+    fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
+        Ok(K::Asset::access_mut(project).insert(<K::Asset as Asset<K>>::new(self.path)))
+    }
+}
+
+pub struct FinishAssetLoad<K: Kind> {
+    pub id: <K::Asset as Stored>::Id,
+    pub result: Result<<K::Asset as Asset<K>>::Data, String>,
+}
+impl<K: Kind> Command for FinishAssetLoad<K> {
+    type Output = ();
+    fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
+        if let Some(asset) = K::Asset::access_mut(project).get_mut(self.id) {
+            *asset.state_mut() = match self.result {
+                Ok(data) => AssetState::Ready(data),
+                Err(_) => AssetState::Failed,
+            };
+        }
+        Ok(())
     }
 }

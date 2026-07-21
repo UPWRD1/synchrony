@@ -6,12 +6,12 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::model::asset::AudioAsset;
+use crate::model::asset::{AudioAsset, AudioAssetData};
 
 use audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{
-    Async, FixedAsync, Indexing, PolynomialDegree, Resampler, SincInterpolationParameters,
-    SincInterpolationType, WindowFunction,
+    Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
 };
 
 use symphonia::core::{
@@ -23,7 +23,12 @@ use symphonia::core::{
     meta::MetadataOptions,
 };
 
-pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Result<AudioAsset> {
+struct AssetServer {}
+
+pub fn load_audio_assetdata(
+    path: impl Into<PathBuf>,
+    target_sample_rate: u32,
+) -> Result<AudioAssetData> {
     let path = path.into();
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.
@@ -110,12 +115,12 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
             Err(_) => break,
         }
     }
-    Ok(AudioAsset {
-        samples: Arc::new(samples),
+    let resampled = resample_rubato(&samples, channels, source_sample_rate, target_sample_rate)?;
+    Ok(AudioAssetData {
+        samples: Arc::new(resampled),
         channels,
         sample_rate: target_sample_rate,
         gain: 20.0,
-        path,
     })
 }
 

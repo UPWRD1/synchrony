@@ -12,10 +12,11 @@ mod tests {
     use super::*;
     use crate::engine::{AddClip, AddLink, AddTrack};
     use crate::engine::{AddNode, assetserver};
+    use crate::model::Audio;
+    use crate::model::asset::Asset;
     use crate::model::flow::Param;
     use crate::model::flow::nodes::lowpass::LowpassFilter;
     use crate::model::project::ProjectData;
-    use crate::model::{Audio, Stored};
     use anyhow::Result;
 
     use std::sync::Arc;
@@ -23,7 +24,7 @@ mod tests {
     use engine::Engine;
     #[test]
     fn it_works() {
-        helper();
+        helper().unwrap();
     }
 
     fn helper() -> Result<()> {
@@ -33,14 +34,14 @@ mod tests {
             Engine::new(project)?
         };
         let master_node_id = engine.project().master_node_id;
-        let song_asset = engine.load_asset(assetserver::load_audio_asset(
-            "./assets/AUDIO_4892.mp3",
-            engine.sample_rate(),
-        )?);
+        let song_asset = engine.request_load_asset("./assets/AUDIO_4892.mp3")?;
+
+        engine.poll_asset_loads();
 
         let song_len = {
             let asset = &engine.project().assets[song_asset];
-            asset.samples.len() as u64 / asset.channels as u64
+            let data = asset.data().unwrap();
+            data.samples.len() as u64 / data.channels as u64
         };
 
         let lowpass = engine.apply(AddNode {

@@ -10,7 +10,7 @@ use crate::{
             clip::{AudioClip, Clip},
             track::{AudioTrack, Track},
         },
-        asset::AudioAsset,
+        asset::{Asset, AudioAsset},
         project::ProjectData,
     },
 };
@@ -55,7 +55,7 @@ pub trait Kind:
     + Serialize
     + DeserializeOwned
 {
-    type Asset: Stored;
+    type Asset: Asset<Self> + Stored;
     type Clip: Clip<Self> + Stored;
     type Track: Track<Self> + Stored;
 
