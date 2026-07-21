@@ -2,14 +2,18 @@ pub mod assetserver;
 pub mod bbp;
 pub mod command;
 pub mod engineconfig;
+pub mod state;
 pub mod tick;
 
 use std::any::Any;
-use std::marker::PhantomData;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, atomic::AtomicU64};
 
 use crate::engine::bbp::BlockBufferPool;
 pub use crate::engine::command::*;
+use crate::engine::state::{
+    GARBAGE_RING_CAPACITY, Garbage, GraphUpdate, MAX_NODES, NodeStatePool, UPDATE_RING_CAPACITY,
+};
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 use crate::model::{
     DataKind,
@@ -19,8 +23,6 @@ use crate::model::{
 };
 
 use anyhow::Result;
-use arc_swap::ArcSwap;
-use cpal::SampleFormat;
 use slotmap::SecondaryMap;
 use thiserror::Error;
 
@@ -54,13 +56,6 @@ pub struct CompiledGraph {
     pub master_output_slot: SlotIndex,
 }
 
-pub struct GraphUpdate {
-    pub project: Arc<ProjectData>,
-    pub schedule: Arc<CompiledGraph>,
-    pub state_additions: Vec<(NodeID, Box<dyn Any + Send>)>, // pre-built off-thread
-    pub state_removals: Vec<NodeID>,
-}
-
 #[derive(Debug, Error)]
 pub enum EngineError {
     TrackNotFound,
@@ -92,8 +87,9 @@ pub fn execute_block<'a>(
     schedule: &CompiledGraph,
     project: &ProjectData,
     block_start: Tick,
-    channels: u16,
+    config: &EngineConfig,
     pool: &'a mut BlockBufferPool,
+    state_pool: &mut NodeStatePool,
 ) -> &'a [f32] {
     // assert_no_alloc(|| {
 
@@ -123,7 +119,7 @@ pub fn execute_block<'a>(
             project,
             &mut executor,
             block_start,
-            channels,
+            config,
             &step.input_slots,
             &step.output_slots,
         );
@@ -142,50 +138,118 @@ pub struct RenderState {
     pub schedule: Arc<CompiledGraph>,
 }
 
+#[derive(Debug, Clone)]
+#[repr(u8)]
+pub enum TransportState {
+    Stopped,
+    Playing,
+    Recording,
+    Paused,
+}
+
+#[derive(Debug, Default)]
+pub struct Transport(AtomicU8);
+
+impl Transport {
+    pub fn new() -> Self {
+        Self(AtomicU8::new(0))
+    }
+    fn transport(&self, to: TransportState) {
+        self.0.store(to as u8, Ordering::Relaxed);
+    }
+
+    pub fn play(&self) {
+        self.transport(TransportState::Playing);
+    }
+
+    pub fn stop(&self) {
+        self.transport(TransportState::Stopped);
+    }
+
+    #[inline]
+    pub fn is_playing(&self) -> bool {
+        self.0.load(Ordering::Relaxed) == TransportState::Playing as u8
+    }
+}
+
 pub struct Engine {
-    pub config: EngineConfig,
+    pub transport: Arc<Transport>,
     pub playhead: Arc<AtomicU64>,
     current: Arc<ProjectData>,
     undo_stack: Vec<Arc<ProjectData>>,
     redo_stack: Vec<Arc<ProjectData>>,
-    publish: Arc<ArcSwap<RenderState>>,
+    update_tx: rtrb::Producer<GraphUpdate>,
     stream: cpal::Stream,
 }
 
+pub const MAX_BUFFER_SLOTS: usize = 4096;
 impl Engine {
     pub fn new(project: Arc<ProjectData>) -> Result<Self> {
+        use cpal::traits::{DeviceTrait, StreamTrait};
+
+        let config = EngineConfig::create()?;
+        let sample_rate = config.config.sample_rate;
+        let channels = config.config.channels;
+
         let schedule = project
             .compile_graph()
             .expect("fresh project graph is always acyclic");
+        if schedule.buffer_count > MAX_BUFFER_SLOTS || project.graph.nodes.len() > MAX_NODES {
+            panic!("Graph is too large");
+        }
 
-        let publish = Arc::new(ArcSwap::from_pointee(RenderState {
+        // Initial state for every node already in the fresh graph.
+        let state_additions: Vec<_> = project
+            .graph
+            .nodes
+            .iter()
+            .map(|(id, node)| (id, node.init_state()))
+            .collect();
+
+        let (mut update_tx, update_rx) = rtrb::RingBuffer::<GraphUpdate>::new(UPDATE_RING_CAPACITY);
+        let (garbage_tx, mut garbage_rx) = rtrb::RingBuffer::<Garbage>::new(GARBAGE_RING_CAPACITY);
+
+        // Seed the ring with the initial graph so the audio thread has
+        // something to play from the very first callback.
+        let _ = update_tx.push(GraphUpdate {
             project: project.clone(),
             schedule: Arc::new(schedule),
-        }));
-        let playhead = Arc::new(AtomicU64::new(0));
-        let config = EngineConfig::create()?;
-        let stream = match config.sample_format {
-            SampleFormat::F32 => Self::build_stream::<f32>(&config, playhead, publish.clone())?,
-            other => anyhow::bail!(
-                "device wants sample format {other:?}; only f32 output is wired up in this skeleton \
-             (TODO: convert via cpal::Sample for I16/U16 devices)"
-            ),
-        };
-        Ok(Self {
+            state_additions,
+            state_removals: Vec::new(),
+        });
+
+        // Background thread: the only place anything from the audio thread
+        // actually gets dropped/deallocated.
+        std::thread::spawn(move || {
+            loop {
+                while let Ok(garbage) = garbage_rx.pop() {
+                    drop(garbage);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        });
+
+        let transport = Arc::new(Transport::default());
+        let playhead = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        let stream = Self::build_stream::<f32>(
             config,
+            transport.clone(),
+            playhead.clone(),
+            update_rx,
+            garbage_tx,
+        )?;
+        stream.play()?; // device stream runs continuously; transport gates output
+
+        Ok(Self {
+            playhead,
+            transport,
             current: project,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            publish,
-            playhead: Arc::new(AtomicU64::new(0)),
+            update_tx,
             stream,
         })
-    }
-
-    /// Clone this and hand it to the audio callback; it's the read side of
-    /// the lock-free publish.
-    pub fn render_state_handle(&self) -> Arc<ArcSwap<RenderState>> {
-        self.publish.clone()
     }
 
     pub fn project(&self) -> &ProjectData {
@@ -237,15 +301,46 @@ impl Engine {
         self.publish_current();
     }
 
+    /// Builds the next GraphUpdate off the audio thread and pushes it
+    /// through the ring. Allocation happens here, on the control thread —
+    /// that's fine, this is not the real-time path.
     fn publish_current(&mut self) {
         let schedule = self
             .current
             .compile_graph()
-            .expect("command validation should prevent cycles before this point");
-        self.publish.store(Arc::new(RenderState {
+            .expect("command validation prevents cycles");
+
+        if schedule.buffer_count > MAX_BUFFER_SLOTS || self.current.graph.nodes.len() > MAX_NODES {
+            // In a real UI this would surface as a rejected edit before
+            // getting here (validate in Command::execute); this is the
+            // last-resort backstop.
+            eprintln!("graph exceeds preallocated real-time budget; edit ignored");
+            return;
+        }
+
+        let old_ids: std::collections::HashSet<NodeID> = self
+            .undo_stack
+            .last()
+            .map(|p| p.graph.nodes.keys().collect())
+            .unwrap_or_default();
+        let new_ids: std::collections::HashSet<NodeID> = self.current.graph.nodes.keys().collect();
+
+        let state_additions: Vec<_> = new_ids
+            .difference(&old_ids)
+            .map(|&id| (id, self.current.graph.nodes[id].init_state()))
+            .collect();
+        let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
+
+        let update = GraphUpdate {
             project: self.current.clone(),
             schedule: Arc::new(schedule),
-        }));
+            state_additions,
+            state_removals,
+        };
+
+        if self.update_tx.push(update).is_err() {
+            eprintln!("update ring full — audio thread stalled or edits too rapid; dropping edit");
+        }
     }
 
     fn apply_command<T>(&self, project: &mut ProjectData, cmd: T) -> Result<T::Output>
@@ -261,61 +356,61 @@ impl Engine {
         Ok(())
     }
 
-    pub fn play(&self) -> Result<()> {
-        use cpal::traits::StreamTrait;
-        // --- 3. Hand the audio thread its read handle -----------------------
-        let render_state: Arc<ArcSwap<RenderState>> = self.render_state_handle();
-        // let playhead = Arc::new(AtomicU64::new(0));
-
-        todo!();
-        dbg!();
-        println!("Press enter to play");
-        let mut buf = String::new();
-        std::io::stdin().read_line(&mut buf)?;
-        // Stream has to stay alive for audio to keep playing -- this local
-        // binding, held until the end of main(), is what does that.
-        stream.play()?;
-
-        println!("Playing... press enter to quit");
-        let mut buf = String::new();
-        std::io::stdin().read_line(&mut buf)?;
-        Ok(())
+    pub fn transport(&mut self, state: TransportState) {
+        todo!()
     }
-
-    /// Generic over the sample type cpal actually wants; only instantiated
-    /// for f32 today (see the SampleFormat match above), but written this way
-    /// so adding I16/U16 conversion later is a second match arm, not a rewrite.
     fn build_stream<T>(
-        config: &EngineConfig,
-        playhead: Arc<AtomicU64>,
-        render_state: Arc<ArcSwap<RenderState>>,
+        config: EngineConfig,
+        transport: Arc<Transport>,
+        playhead: Arc<std::sync::atomic::AtomicU64>,
+        mut update_rx: rtrb::Consumer<GraphUpdate>,
+        mut garbage_tx: rtrb::Producer<Garbage>,
     ) -> Result<cpal::Stream>
     where
         T: cpal::SizedSample + cpal::FromSample<f32>,
     {
         use cpal::traits::DeviceTrait;
 
-        let device_clone = config.device.clone();
-        let config = config.config;
-        let playhead = playhead.clone();
-        let state = render_state.load();
-        let mut pool = BlockBufferPool::new(state.schedule.buffer_count, 1024);
-        let stream = device_clone.build_output_stream(
-            config,
-            move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
-                let frame_count = data.len() / config.channels as usize;
-                let start =
-                    playhead.fetch_add(frame_count as u64, std::sync::atomic::Ordering::Relaxed);
+        let device = config.device.clone();
+        let mut buffer_pool = BlockBufferPool::new(MAX_BUFFER_SLOTS, 1024);
+        let mut state_pool = NodeStatePool::new();
+        let mut current: Option<GraphUpdate> = None;
 
-                // The entire real-time path: load the current published state
-                // (lock-free), run the compiled schedule, copy the result out
-                // converting f32 -> whatever cpal wants.
+        let stream = device.build_output_stream(
+            config.config,
+            move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
+                // Tier 1: drain any pending structural updates. Zero
+                // allocation: everything was pre-built off-thread.
+                while let Ok(mut update) = update_rx.pop() {
+                    state_pool.apply(&mut update, &mut garbage_tx);
+                    if let Some(old) = current.replace(update) {
+                        let _ = garbage_tx.push(Garbage::Update(old));
+                    }
+                }
+
+                let frame_count = data.len() / config.config.channels as usize;
+                let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
+
+                if !transport.is_playing() {
+                    data.fill(T::from_sample(0.0));
+                    return;
+                }
+
+                let Some(GraphUpdate {
+                    project, schedule, ..
+                }) = current.as_ref()
+                else {
+                    data.fill(T::from_sample(0.0));
+                    return;
+                };
+
                 let mixed = execute_block(
-                    &state.schedule,
-                    &state.project,
-                    tick::Tick(start),
-                    config.channels,
-                    &mut pool,
+                    schedule,
+                    project,
+                    Tick(start),
+                    &config,
+                    &mut buffer_pool,
+                    &mut state_pool,
                 );
 
                 for (dst, &src) in data.iter_mut().zip(mixed) {

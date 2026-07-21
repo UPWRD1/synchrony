@@ -1,7 +1,10 @@
 //! Module for Flow related types
-use std::sync::{
-    Arc,
-    atomic::{AtomicU32, Ordering},
+use std::{
+    any::Any,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
 };
 
 use dyn_clone::DynClone;
@@ -9,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::{SlotMap, new_key_type};
 
 use crate::{
-    engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
+    engine::{SlotIndex, bbp::PoolExecutor, engineconfig::EngineConfig, tick::Tick},
     model::{DataKind, Kind, project::ProjectData},
 };
 
@@ -60,12 +63,20 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
     fn inputs(&self) -> &[Socket];
     fn outputs(&self) -> &[Socket];
 
+    /// Fresh runtime state for a new instance of this node, built off the
+    /// audio thread (control thread, inside `publish_current`) and handed
+    /// over pre-built. Nodes with no runtime state (Master, TrackReader)
+    /// use the default.
+    fn init_state(&self) -> Box<dyn Any + Send> {
+        Box::new(())
+    }
+
     fn process(
         &self,
         project: &ProjectData,
         pool: &mut PoolExecutor,
         block_start: Tick,
-        channels: u16,
+        config: &EngineConfig,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
     );

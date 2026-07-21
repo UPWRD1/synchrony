@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use crate::{
-    engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
+    engine::{SlotIndex, bbp::PoolExecutor, engineconfig::EngineConfig, tick::Tick},
     model::{
         Audio, DataKind, Kind, Renderable, Stored,
         flow::{Node, Socket},
@@ -38,13 +38,13 @@ impl Node for TrackReader<Audio> {
         project: &ProjectData,
         pool: &mut PoolExecutor,
         block_start: Tick,
-        channels: u16,
+        config: &EngineConfig,
         _: &[SlotIndex],
         outputs: &[SlotIndex],
     ) {
         if let Some(track) = project.tracks.get(self.id) {
             let output_buf = pool.get_output(outputs[0]);
-            track.render(project, output_buf, block_start, channels);
+            track.render(project, output_buf, block_start, config);
         }
     }
 

@@ -69,8 +69,11 @@ mod tests {
             inc_snap_start += clap_len + snap_len;
         }
 
-        engine.play()?;
-
+        engine.transport.play();
+        println!("Playing... press enter to quit");
+        let mut buf = String::new();
+        std::io::stdin().read_line(&mut buf)?;
+        engine.transport.stop();
         Ok(())
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
+    engine::{SlotIndex, bbp::PoolExecutor, engineconfig::EngineConfig, tick::Tick},
     model::{
         DataKind,
         flow::{Node, Socket},
@@ -37,7 +37,7 @@ impl Node for Master {
         _: &ProjectData,
         pool: &mut PoolExecutor,
         _: Tick,
-        _: u16,
+        _: &EngineConfig,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
     ) {

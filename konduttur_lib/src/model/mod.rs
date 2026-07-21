@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::{Key, SlotMap};
 
 use crate::{
-    engine::tick::Tick,
+    engine::{engineconfig::EngineConfig, tick::Tick},
     model::{
         arr::{
             clip::{AudioClip, Clip},
@@ -79,7 +79,7 @@ impl DataKind {
 }
 
 pub trait Renderable {
-    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16);
+    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, config: &EngineConfig);
 }
 
 pub trait Stored: Sized {
