@@ -5,6 +5,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Tick(pub u64);
 
+impl Tick {
+    pub fn from_secs(secs: f64, sample_rate: u32) -> Tick {
+        Self((secs * sample_rate as f64).round() as u64)
+    }
+    pub fn as_secs(self, sample_rate: u32) -> f64 {
+        self.0 as f64 / sample_rate as f64
+    }
+}
+
 impl From<u64> for Tick {
     fn from(value: u64) -> Self {
         Self(value)

@@ -10,12 +10,12 @@ static A: AllocDisabler = AllocDisabler;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::AddNode;
     use crate::engine::{AddClip, AddLink, AddTrack};
-    use crate::engine::{AddNode, assetserver};
+    use crate::model::Audio;
     use crate::model::flow::Param;
     use crate::model::flow::nodes::lowpass::LowpassFilter;
     use crate::model::project::ProjectData;
-    use crate::model::{Audio, Stored};
     use anyhow::Result;
 
     use std::sync::Arc;
@@ -33,10 +33,7 @@ mod tests {
             Engine::new(project)?
         };
         let master_node_id = engine.project().master_node_id;
-        let song_asset = engine.load_asset(assetserver::load_audio_asset(
-            "./assets/AUDIO_4892.mp3",
-            engine.sample_rate(),
-        )?);
+        let song_asset = engine.load_asset()?;
 
         let song_len = {
             let asset = &engine.project().assets[song_asset];
@@ -82,11 +79,6 @@ mod tests {
         engine
             .playhead
             .store(0, std::sync::atomic::Ordering::Relaxed);
-
-        // inc_clap_start += clap_len + snap_len;
-        // inc_snap_start += clap_len + snap_len;
-
-        dbg!(&engine.project().graph);
 
         engine.transport.play();
         println!("Playing... press enter to quit");

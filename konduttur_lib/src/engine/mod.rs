@@ -5,7 +5,6 @@ pub mod engineconfig;
 pub mod state;
 pub mod tick;
 
-use std::any::Any;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, atomic::AtomicU64};
 
@@ -15,15 +14,9 @@ use crate::engine::state::{
     GARBAGE_RING_CAPACITY, Garbage, GraphUpdate, MAX_NODES, NodeStatePool, UPDATE_RING_CAPACITY,
 };
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
-use crate::model::{
-    DataKind,
-    asset::{AudioAsset, AudioAssetID},
-    flow::NodeID,
-    project::ProjectData,
-};
+use crate::model::{DataKind, asset::AudioAssetID, flow::NodeID, project::ProjectData};
 
 use anyhow::Result;
-use slotmap::SecondaryMap;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------
@@ -73,14 +66,6 @@ impl std::fmt::Display for EngineError {
 // ---------------------------------------------------------------------
 // Execution — runs once per audio callback
 // ---------------------------------------------------------------------
-
-struct AudioResources {
-    current: Option<GraphUpdate>, // holds the live Arcs
-    state_pool: SecondaryMap<NodeID, Box<dyn Any + Send>>, // with_capacity(MAX_NODES)
-    buffer_pool: BlockBufferPool, // sized once, generously
-    updates_rx: rtrb::Consumer<GraphUpdate>,
-    trash_tx: rtrb::Producer<Box<dyn Any + Send>>,
-}
 
 /// Runs the compiled schedule for one block and returns the master mix.
 pub fn execute_block<'a>(
@@ -180,6 +165,10 @@ pub struct Engine {
     current: Arc<ProjectData>,
     undo_stack: Vec<Arc<ProjectData>>,
     redo_stack: Vec<Arc<ProjectData>>,
+    audio_manager: AudioManager,
+}
+
+pub struct AudioManager {
     update_tx: rtrb::Producer<GraphUpdate>,
     _stream: cpal::Stream,
 }
@@ -187,7 +176,7 @@ pub struct Engine {
 pub const MAX_BUFFER_SLOTS: usize = 4096;
 impl Engine {
     pub fn new(project: Arc<ProjectData>) -> Result<Self> {
-        use cpal::traits::{DeviceTrait, StreamTrait};
+        use cpal::traits::StreamTrait;
 
         let config = EngineConfig::create()?;
         let channels = config.config.channels;
@@ -248,8 +237,10 @@ impl Engine {
             current: project,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            update_tx,
-            _stream: stream,
+            audio_manager: AudioManager {
+                update_tx,
+                _stream: stream,
+            },
         })
     }
 
@@ -264,11 +255,12 @@ impl Engine {
     /// graph/clip edits, isn't meaningfully undo-able in the same sense.
     /// A real engine would still route this through some queue so it
     /// doesn't block the caller, but it's direct here for clarity.
-    pub fn load_asset(&mut self, asset: AudioAsset) -> AudioAssetID {
+    pub fn load_asset(&mut self) -> Result<AudioAssetID> {
+        let asset = assetserver::load_audio_asset("./assets/AUDIO_4892.mp3", self.sample_rate())?;
         let mut next = (*self.current).clone();
         let id = next.assets.insert(asset);
         self.commit(next);
-        id
+        Ok(id)
     }
 
     pub fn apply<T>(&mut self, cmd: T) -> Result<T::Output>
@@ -347,7 +339,7 @@ impl Engine {
             state_removals,
         };
 
-        if self.update_tx.push(update).is_err() {
+        if self.audio_manager.update_tx.push(update).is_err() {
             eprintln!("update ring full — audio thread stalled or edits too rapid; dropping edit");
         }
     }

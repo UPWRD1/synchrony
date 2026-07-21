@@ -12,6 +12,13 @@ new_key_type! {
 pub trait Asset<K: Kind> {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AssetData<Data> {
+    Pending,
+    Ready(Data),
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AudioAsset {
     #[serde(skip)]
     pub samples: Arc<Vec<f32>>,

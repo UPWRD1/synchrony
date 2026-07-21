@@ -10,8 +10,8 @@ use crate::model::asset::AudioAsset;
 
 use audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{
-    Async, FixedAsync, Indexing, PolynomialDegree, Resampler, SincInterpolationParameters,
-    SincInterpolationType, WindowFunction,
+    Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
 };
 
 use symphonia::core::{
@@ -110,11 +110,14 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
             Err(_) => break,
         }
     }
+
+    let resampled = resample_rubato(&samples, channels, source_sample_rate, target_sample_rate)?;
+
     Ok(AudioAsset {
-        samples: Arc::new(samples),
+        samples: Arc::new(resampled),
         channels,
         sample_rate: target_sample_rate,
-        gain: 20.0,
+        gain: 1.0,
         path,
     })
 }
@@ -128,19 +131,22 @@ fn resample_rubato(
     from_rate: u32,
     to_rate: u32,
 ) -> Result<Vec<f32>> {
+    println!("Converting sample rate {from_rate} Hz -> {to_rate} Hz");
     if from_rate == to_rate || interleaved.is_empty() {
         return Ok(interleaved.to_vec());
     }
     let channels = channels as usize;
     let frame_count = interleaved.len() / channels;
-    let f_ratio = from_rate as f64 / to_rate as f64;
+    let f_ratio = to_rate as f64 / from_rate as f64;
 
     let mut outdata: Vec<f32> = vec![0.0; 2 * channels * (frame_count as f64 * f_ratio) as usize];
+
     let outdata_capacity = outdata.len() / channels;
 
     let input_adapter = InterleavedSlice::new(interleaved, channels, frame_count).unwrap();
     let mut output_adapter =
         InterleavedSlice::new_mut(&mut outdata, channels, outdata_capacity).unwrap();
+
     let mut resampler = {
         let sinc_len = 128;
         let oversampling_factor = 256;
@@ -150,11 +156,16 @@ fn resample_rubato(
         let params = SincInterpolationParameters::new(sinc_len, window)
             .oversampling_factor(oversampling_factor)
             .interpolation(interpolation);
-        Async::<f32>::new_sinc(f_ratio, 1.1, &params, 1024, channels, FixedAsync::Input).unwrap()
+        Async::<f32>::new_sinc(f_ratio, 2.0, &params, 1024, channels, FixedAsync::Output).unwrap()
     };
 
-    let _ = resampler
+    let (nbr_in, nbr_out) = resampler
         .process_all_into_buffer(&input_adapter, &mut output_adapter, frame_count, None)
         .unwrap();
+
+    println!(
+        "Processed {} input frames into {} output frames",
+        nbr_in, nbr_out
+    );
     Ok(outdata)
 }
