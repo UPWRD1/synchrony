@@ -1,10 +1,14 @@
 pub mod assetserver;
+pub mod bbp;
 pub mod command;
 pub mod engineconfig;
 pub mod tick;
 
+use std::any::Any;
+use std::marker::PhantomData;
 use std::sync::{Arc, atomic::AtomicU64};
 
+use crate::engine::bbp::BlockBufferPool;
 pub use crate::engine::command::*;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 use crate::model::{
@@ -17,6 +21,7 @@ use crate::model::{
 use anyhow::Result;
 use arc_swap::ArcSwap;
 use cpal::SampleFormat;
+use slotmap::SecondaryMap;
 use thiserror::Error;
 
 // ---------------------------------------------------------------------
@@ -49,6 +54,13 @@ pub struct CompiledGraph {
     pub master_output_slot: SlotIndex,
 }
 
+pub struct GraphUpdate {
+    pub project: Arc<ProjectData>,
+    pub schedule: Arc<CompiledGraph>,
+    pub state_additions: Vec<(NodeID, Box<dyn Any + Send>)>, // pre-built off-thread
+    pub state_removals: Vec<NodeID>,
+}
+
 #[derive(Debug, Error)]
 pub enum EngineError {
     TrackNotFound,
@@ -67,68 +79,14 @@ impl std::fmt::Display for EngineError {
 // Execution — runs once per audio callback
 // ---------------------------------------------------------------------
 
-pub struct BlockBufferPool {
-    /// Contiguous pre-allocated block: (buffer_count * block_size)
-    memory: Vec<f32>,
-    block_size: usize,
+struct AudioResources {
+    current: Option<GraphUpdate>, // holds the live Arcs
+    state_pool: SecondaryMap<NodeID, Box<dyn Any + Send>>, // with_capacity(MAX_NODES)
+    buffer_pool: BlockBufferPool, // sized once, generously
+    updates_rx: rtrb::Consumer<GraphUpdate>,
+    trash_tx: rtrb::Producer<Box<dyn Any + Send>>,
 }
 
-impl BlockBufferPool {
-    pub fn new(buffer_count: usize, block_size: usize) -> Self {
-        Self {
-            memory: vec![0.0f32; buffer_count * block_size],
-            block_size,
-        }
-    }
-
-    #[inline]
-    pub fn clear(&mut self) {
-        self.memory.fill(0.0f32);
-    }
-
-    /// Creates an execution context that allows unsafe, arbitrary slot slicing
-    /// while keeping the unsafe code safely isolated.
-    #[inline]
-    pub fn executor(&mut self) -> PoolExecutor {
-        PoolExecutor {
-            ptr: self.memory.as_mut_ptr(),
-            block_size: self.block_size,
-            // Track length to avoid out-of-bounds memory access in debug mode
-            total_len: self.memory.len(),
-        }
-    }
-}
-
-/// A short-lived handle for zero-allocation, arbitrary buffer slicing
-pub struct PoolExecutor {
-    ptr: *mut f32,
-    block_size: usize,
-    total_len: usize,
-}
-
-impl PoolExecutor {
-    /// Get a read-only view of a slot.
-    /// Safety: Assumes no other code is actively writing to this slot right now.
-    #[inline]
-    pub fn get_input<'a>(&self, slot: SlotIndex) -> &'a [f32] {
-        unsafe {
-            let offset = slot * self.block_size;
-            debug_assert!(offset + self.block_size <= self.total_len);
-            std::slice::from_raw_parts(self.ptr.add(offset), self.block_size)
-        }
-    }
-
-    /// Get a mutable view of a slot.
-    /// Safety: Assumes no other code is actively reading or writing to this slot right now.
-    #[inline]
-    pub fn get_output<'a>(&mut self, slot: SlotIndex) -> &'a mut [f32] {
-        unsafe {
-            let offset = slot * self.block_size;
-            debug_assert!(offset + self.block_size <= self.total_len);
-            std::slice::from_raw_parts_mut(self.ptr.add(offset), self.block_size)
-        }
-    }
-}
 /// Runs the compiled schedule for one block and returns the master mix.
 pub fn execute_block<'a>(
     schedule: &CompiledGraph,
@@ -191,6 +149,7 @@ pub struct Engine {
     undo_stack: Vec<Arc<ProjectData>>,
     redo_stack: Vec<Arc<ProjectData>>,
     publish: Arc<ArcSwap<RenderState>>,
+    stream: cpal::Stream,
 }
 
 impl Engine {
@@ -203,13 +162,23 @@ impl Engine {
             project: project.clone(),
             schedule: Arc::new(schedule),
         }));
+        let playhead = Arc::new(AtomicU64::new(0));
+        let config = EngineConfig::create()?;
+        let stream = match config.sample_format {
+            SampleFormat::F32 => Self::build_stream::<f32>(&config, playhead, publish.clone())?,
+            other => anyhow::bail!(
+                "device wants sample format {other:?}; only f32 output is wired up in this skeleton \
+             (TODO: convert via cpal::Sample for I16/U16 devices)"
+            ),
+        };
         Ok(Self {
-            config: EngineConfig::create()?,
+            config,
             current: project,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             publish,
             playhead: Arc::new(AtomicU64::new(0)),
+            stream,
         })
     }
 
@@ -298,13 +267,7 @@ impl Engine {
         let render_state: Arc<ArcSwap<RenderState>> = self.render_state_handle();
         // let playhead = Arc::new(AtomicU64::new(0));
 
-        let stream = match self.config.sample_format {
-            SampleFormat::F32 => self.build_stream::<f32>(render_state)?,
-            other => anyhow::bail!(
-                "device wants sample format {other:?}; only f32 output is wired up in this skeleton \
-             (TODO: convert via cpal::Sample for I16/U16 devices)"
-            ),
-        };
+        todo!();
         dbg!();
         println!("Press enter to play");
         let mut buf = String::new();
@@ -322,15 +285,19 @@ impl Engine {
     /// Generic over the sample type cpal actually wants; only instantiated
     /// for f32 today (see the SampleFormat match above), but written this way
     /// so adding I16/U16 conversion later is a second match arm, not a rewrite.
-    fn build_stream<T>(&self, render_state: Arc<ArcSwap<RenderState>>) -> Result<cpal::Stream>
+    fn build_stream<T>(
+        config: &EngineConfig,
+        playhead: Arc<AtomicU64>,
+        render_state: Arc<ArcSwap<RenderState>>,
+    ) -> Result<cpal::Stream>
     where
         T: cpal::SizedSample + cpal::FromSample<f32>,
     {
         use cpal::traits::DeviceTrait;
 
-        let device_clone = self.config.device.clone();
-        let config = self.config.config;
-        let playhead = self.playhead.clone();
+        let device_clone = config.device.clone();
+        let config = config.config;
+        let playhead = playhead.clone();
         let state = render_state.load();
         let mut pool = BlockBufferPool::new(state.schedule.buffer_count, 1024);
         let stream = device_clone.build_output_stream(

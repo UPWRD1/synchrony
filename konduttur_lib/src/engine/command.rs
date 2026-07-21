@@ -3,7 +3,7 @@ use crate::{
     model::{
         Kind, Stored,
         arr::{clip::AudioClipID, track::AudioTrackID},
-        flow::{Node, NodeID, SocketIndex, TrackReader},
+        flow::{Node, NodeID, SocketIndex, nodes::trackreader::TrackReader},
         project::ProjectData,
     },
 };

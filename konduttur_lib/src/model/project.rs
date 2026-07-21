@@ -3,18 +3,20 @@ use std::collections::{HashMap, VecDeque};
 use crate::{
     engine::{CompiledGraph, EngineError, ScheduleStep, SlotIndex, SummingCommand, tick::Tick},
     model::{
-        Audio, DataKind, Kind, Stored,
+        DataKind, Kind, Stored,
         arr::{
             clip::{AudioClip, AudioClipID, Clip},
             track::{AudioTrack, AudioTrackID, Track},
         },
         asset::{AudioAsset, AudioAssetID},
-        flow::{Link, LinkID, Master, Node, NodeGraph, NodeID, SocketIndex, TrackReader},
+        flow::{
+            Link, LinkID, Node, NodeGraph, NodeID, SocketIndex,
+            nodes::{master::Master, trackreader::TrackReader},
+        },
     },
 };
 use anyhow::Result;
 
-use serde::{Deserialize, Serialize};
 use slotmap::SlotMap;
 
 #[derive(Debug, Clone)]
@@ -160,7 +162,7 @@ impl ProjectData {
         } else {
             node.inputs()
         };
-        list.get(endpoint.1 as usize)
+        list.get(endpoint.1)
             .map(|s| &s.kind)
             .ok_or(EngineError::NodeNotFound(endpoint.0).into())
     }
@@ -231,7 +233,7 @@ impl ProjectData {
             let mut raw_input_sources = vec![Vec::new(); node.inputs().len()];
             for link in self.graph.links.values().filter(|l| l.to.0 == node_id) {
                 if let Some(&slot) = output_slot.get(&link.from) {
-                    raw_input_sources[link.to.1 as usize].push(slot);
+                    raw_input_sources[link.to.1].push(slot);
                 }
             }
 
