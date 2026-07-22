@@ -2,7 +2,7 @@ use crate::{
     engine::tick::Tick,
     model::{
         Kind, Stored,
-        flow::{LinkID, Node, NodeID, SocketIndex, nodes::trackreader::TrackReader},
+        flow::{Link, Node, NodeID, SocketIndex, nodes::trackreader::TrackReader},
         project::ProjectData,
     },
 };
@@ -22,7 +22,7 @@ impl<K: Kind> Command for AddTrack<K>
 where
     TrackReader<K>: Node,
 {
-    type Output = <K::Track as Stored>::Id;
+    type Output = (<K::Track as Stored>::Id, NodeID);
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
         project.add_track::<K>(self.name, self.channels)
     }
@@ -81,7 +81,7 @@ pub struct AddLink {
 }
 
 impl Command for AddLink {
-    type Output = LinkID;
+    type Output = Option<Link>;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
         project.add_link(self.from, self.to)
     }

@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use crate::{
-    engine::{CompiledGraph, EngineError, ScheduleStep, SlotIndex, SummingCommand, tick::Tick},
+    engine::{CompiledGraph, EngineError, ScheduleStep, SlotIndex, tick::Tick},
     model::{
         DataKind, Kind, Stored,
         arr::{
@@ -10,7 +10,7 @@ use crate::{
         },
         asset::{AudioAsset, AudioAssetID},
         flow::{
-            Link, LinkID, Node, NodeGraph, NodeID, SocketIndex,
+            Link, Node, NodeGraph, NodeID, SocketIndex,
             nodes::{master::Master, trackreader::TrackReader},
         },
     },
@@ -48,9 +48,7 @@ impl ProjectData {
         from: (NodeID, SocketIndex),
         to: (NodeID, SocketIndex),
     ) -> Result<()> {
-        self.graph
-            .links
-            .retain(|_, l| !(l.from == from && l.to == to));
+        self.graph.links.retain(|l| !(l.from == from && l.to == to));
         Ok(())
     }
 
@@ -58,7 +56,7 @@ impl ProjectData {
         &mut self,
         from: (NodeID, SocketIndex),
         to: (NodeID, SocketIndex),
-    ) -> Result<LinkID> {
+    ) -> Result<Option<Link>> {
         let from_kind = self.socket_kind_of(from, true)?;
         let to_kind = self.socket_kind_of(to, false)?;
         if !from_kind.can_connect_to(to_kind) {
@@ -68,14 +66,15 @@ impl ProjectData {
             }
             .into());
         }
-        let link_id = self.graph.links.insert(Link { from, to });
+        let link = Link { from, to };
+        // Prevent multiple inputs into the same slot
+        let prev_link = self.graph.links.replace(link);
+
         if self.topo_sort().is_err() {
-            self.graph
-                .links
-                .retain(|_, l| !(l.from == from && l.to == to));
+            self.graph.links.retain(|l| !(l.from == from && l.to == to));
             return Err(EngineError::WouldCreateCycle.into());
         }
-        Ok(link_id)
+        Ok(prev_link)
     }
 
     pub fn move_clip<K: Kind>(
@@ -120,7 +119,7 @@ impl ProjectData {
         self.graph.nodes.remove(linked_id);
         self.graph
             .links
-            .retain(|_, l| l.from.0 != linked_id && l.to.0 != linked_id);
+            .retain(|l| l.from.0 != linked_id && l.to.0 != linked_id);
         for clip_id in track.clips().values() {
             K::Clip::access_mut(self).remove(*clip_id);
         }
@@ -131,7 +130,7 @@ impl ProjectData {
         &mut self,
         name: String,
         channels: u16,
-    ) -> Result<<K::Track as Stored>::Id>
+    ) -> Result<(<K::Track as Stored>::Id, NodeID)>
     where
         TrackReader<K>: Node,
     {
@@ -139,7 +138,7 @@ impl ProjectData {
         let reader_node = TrackReader::<K>::new(track_id, channels);
         let node_id = self.graph.nodes.insert(Box::new(reader_node));
         *K::Track::access_mut(self)[track_id].linked_node_id_mut() = Some(node_id);
-        Ok(track_id)
+        Ok((track_id, node_id))
     }
 
     pub fn add_node<N: Node>(&mut self, node: N) -> NodeID {
@@ -147,24 +146,23 @@ impl ProjectData {
     }
 
     pub fn socket_kind_of(
-        &self,
+        &mut self,
         endpoint: (NodeID, SocketIndex),
         is_output: bool,
     ) -> Result<DataKind> {
         let node = self
             .graph
             .nodes
-            .get(endpoint.0)
+            .get_mut(endpoint.0)
             .ok_or(EngineError::NodeNotFound(endpoint.0))?;
-        let list = if is_output {
-            node.outputs()
+        if is_output {
+            let list = node.outputs();
+            list.get(endpoint.1).map(|s| &s.kind).cloned()
         } else {
-            node.inputs()
-        };
-        list.get(endpoint.1)
-            .map(|s| &s.kind)
-            .ok_or(EngineError::NodeNotFound(endpoint.0).into())
-            .cloned()
+            let input = node.input(endpoint.1);
+            input.map(|s| s.kind)
+        }
+        .ok_or(EngineError::SocketNotFound(endpoint.0, endpoint.1).into())
     }
 
     /// Kahn's algorithm topological sort + a bump-allocated buffer slot per
@@ -177,7 +175,7 @@ impl ProjectData {
         let mut in_degree: HashMap<NodeID, usize> =
             self.graph.nodes.keys().map(|id| (id, 0)).collect();
 
-        for link in self.graph.links.values() {
+        for link in self.graph.links.iter() {
             *in_degree
                 .get_mut(&link.to.0)
                 .ok_or(EngineError::NodeNotFound(link.to.0))? += 1;
@@ -193,7 +191,7 @@ impl ProjectData {
 
         while let Some(n) = queue.pop_front() {
             order.push(n);
-            for link in self.graph.links.values().filter(|l| l.from.0 == n) {
+            for link in self.graph.links.iter().filter(|l| l.from.0 == n) {
                 let d = remaining.get_mut(&link.to.0).unwrap();
                 *d -= 1;
                 if *d == 0 {
@@ -232,13 +230,13 @@ impl ProjectData {
 
             // Temporary container to collect all lines feeding each input socket
             let mut raw_input_sources = vec![Vec::new(); node.inputs().len()];
-            for link in self.graph.links.values().filter(|l| l.to.0 == node_id) {
+            for link in self.graph.links.iter().filter(|l| l.to.0 == node_id) {
                 if let Some(&slot) = output_slot.get(&link.from) {
                     raw_input_sources[link.to.1].push(slot);
                 }
             }
 
-            let mut prep_sums = Vec::new();
+            // let mut prep_sums = Vec::new();
             let mut input_slots = Vec::with_capacity(node.inputs().len());
 
             // Process every single input socket to calculate fan-in mapping metadata
@@ -253,17 +251,7 @@ impl ProjectData {
                         input_slots.push(sources[0]);
                     }
                     _ => {
-                        // Fan-in Summing: Allocate a unique scratch buffer slot out of the pool
-                        let scratch_slot = buffer_count;
-                        buffer_count += 1;
-
-                        prep_sums.push(SummingCommand {
-                            target_scratch_slot: scratch_slot,
-                            source_slots: sources,
-                        });
-
-                        // Hand this pre-mixed scratch slot to the target node's input socket
-                        input_slots.push(scratch_slot);
+                        panic!("multiple nodes in one socket!")
                     }
                 }
             }
@@ -274,7 +262,7 @@ impl ProjectData {
 
             steps.push(ScheduleStep {
                 node_id,
-                prep_sums,
+
                 input_slots,
                 output_slots,
             });

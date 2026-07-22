@@ -64,6 +64,10 @@ impl Node for TrackReader<Audio> {
         Cow::Borrowed(&[])
     }
 
+    fn input(&mut self, _: crate::model::flow::SocketIndex) -> Option<&Socket> {
+        None
+    }
+
     fn outputs(&self) -> Cow<'_, [Socket]> {
         Cow::Borrowed(Self::OUTPUTS)
     }

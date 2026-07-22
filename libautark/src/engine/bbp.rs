@@ -35,7 +35,7 @@ impl BlockBufferPool {
 /// A short-lived handle for zero-allocation, arbitrary buffer slicing
 pub struct PoolExecutor {
     ptr: *mut f32,
-    block_size: usize,
+    pub block_size: usize,
     total_len: usize,
 }
 

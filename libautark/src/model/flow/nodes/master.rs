@@ -53,4 +53,11 @@ impl Node for Master {
 
         output_buf.copy_from_slice(input_buf);
     }
+
+    fn input(&mut self, idx: crate::model::flow::SocketIndex) -> Option<&Socket> {
+        match idx {
+            0 => Some(&Self::INPUTS[0]),
+            _ => None,
+        }
+    }
 }

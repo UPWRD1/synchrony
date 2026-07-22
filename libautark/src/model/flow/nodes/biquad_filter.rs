@@ -50,7 +50,6 @@ impl BiquadFilter {
         name: "out",
         visible: true,
     }];
-    pub const AUDIO_IN: SlotIndex = 0;
 
     pub const BUTTERWORTH_Q: f32 = 0.707;
 
@@ -133,6 +132,10 @@ impl Node for BiquadFilter {
 
     fn inputs(&self) -> Cow<'_, [Socket]> {
         Cow::Borrowed(Self::INPUTS)
+    }
+
+    fn input(&mut self, idx: crate::model::flow::SocketIndex) -> Option<&Socket> {
+        Self::INPUTS.get(idx)
     }
     fn init_state(&self) -> Self::State {
         BiquadFilterState { s1: 0.0, s2: 0.0 }

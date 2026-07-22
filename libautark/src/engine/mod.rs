@@ -5,6 +5,7 @@ pub mod engineconfig;
 pub mod state;
 pub mod tick;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, atomic::AtomicU64};
 
@@ -14,6 +15,7 @@ use crate::engine::state::{
     GARBAGE_RING_CAPACITY, Garbage, GraphUpdate, MAX_NODES, NodeStatePool, UPDATE_RING_CAPACITY,
 };
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
+use crate::model::flow::SocketIndex;
 use crate::model::{DataKind, asset::AudioAssetID, flow::NodeID, project::ProjectData};
 
 use anyhow::Result;
@@ -24,18 +26,17 @@ use thiserror::Error;
 // ---------------------------------------------------------------------
 pub type SlotIndex = usize;
 
-#[derive(Debug, Clone)]
-pub struct SummingCommand {
-    /// The target scratch slot where the summed audio will be collected
-    pub target_scratch_slot: SlotIndex,
-    /// All the source slots that need to be blended together into the scratch slot
-    pub source_slots: Vec<SlotIndex>,
-}
+// #[derive(Debug, Clone)]
+// pub struct SummingCommand {
+//     /// The target scratch slot where the summed audio will be collected
+//     pub target_scratch_slot: SlotIndex,
+//     /// All the source slots that need to be blended together into the scratch slot
+//     pub source_slots: Vec<SlotIndex>,
+// }
 
 pub struct ScheduleStep {
     pub node_id: NodeID,
     /// Pre-compiled instructions telling the engine what to sum before running the node
-    pub prep_sums: Vec<SummingCommand>,
     /// One entry per input socket; each entry lists every buffer slot
     /// feeding it (0 = unconnected, 1 = normal, 2+ = fan-in summed).
     pub input_slots: Vec<SlotIndex>,
@@ -53,6 +54,7 @@ pub struct CompiledGraph {
 pub enum EngineError {
     TrackNotFound,
     NodeNotFound(NodeID),
+    SocketNotFound(NodeID, SocketIndex),
     IncompatibleSockets { from: DataKind, to: DataKind },
     WouldCreateCycle,
 }
@@ -86,19 +88,19 @@ pub fn execute_block<'a>(
         let step = &schedule.steps[i];
         let node = &project.graph.nodes[step.node_id];
 
-        // 1. Process engine-level fan-in matrix configurations
-        for sum_cmd in &step.prep_sums {
-            let target = executor.get_output(sum_cmd.target_scratch_slot);
+        // // 1. Process engine-level fan-in matrix configurations
+        // for sum_cmd in &step.prep_sums {
+        //     let target = executor.get_output(sum_cmd.target_scratch_slot);
 
-            for &source_slot in &sum_cmd.source_slots {
-                let source = executor.get_input(source_slot);
+        //     for &source_slot in &sum_cmd.source_slots {
+        //         let source = executor.get_input(source_slot);
 
-                // Simple additive loop: easily optimized by hardware auto-vectorization
-                for sample_idx in 0..pool.block_size {
-                    target[sample_idx] += source[sample_idx];
-                }
-            }
-        }
+        //         // Simple additive loop: easily optimized by hardware auto-vectorization
+        //         for sample_idx in 0..pool.block_size {
+        //             target[sample_idx] += source[sample_idx];
+        //         }
+        //     }
+        // }
         node.process_erased(
             &mut executor,
             state_pool.get_mut(step.node_id),
@@ -257,8 +259,8 @@ impl Engine {
     /// graph/clip edits, isn't meaningfully undo-able in the same sense.
     /// A real engine would still route this through some queue so it
     /// doesn't block the caller, but it's direct here for clarity.
-    pub fn load_asset(&mut self) -> Result<AudioAssetID> {
-        let asset = assetserver::load_audio_asset("./assets/AUDIO_4892.mp3", self.sample_rate())?;
+    pub fn load_asset(&mut self, path: impl Into<PathBuf>) -> Result<AudioAssetID> {
+        let asset = assetserver::load_audio_asset(path, self.sample_rate())?;
         let mut next = (*self.current).clone();
         let id = next.assets.insert(asset);
         self.commit(next);

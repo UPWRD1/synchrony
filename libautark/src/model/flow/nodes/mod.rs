@@ -1,4 +1,4 @@
-pub mod eq;
-pub mod lowpass;
+pub mod biquad_filter;
 pub mod master;
+pub mod sum;
 pub mod trackreader;

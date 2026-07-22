@@ -2,6 +2,7 @@
 use std::{
     any::{Any, type_name},
     borrow::Cow,
+    collections::HashSet,
     sync::{
         Arc,
         atomic::{AtomicU32, Ordering},
@@ -64,6 +65,7 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
     type State: Send + 'static;
 
     fn inputs(&self) -> Cow<'_, [Socket]>;
+    fn input(&mut self, idx: SocketIndex) -> Option<&Socket>;
     fn outputs(&self) -> Cow<'_, [Socket]>;
 
     /// Fresh runtime state for a new instance of this node, built off the
@@ -85,6 +87,7 @@ pub trait Node: std::fmt::Debug + DynClone + Send + Sync + 'static {
 
 pub trait ErasedNode: std::fmt::Debug + DynClone + Send + Sync + 'static {
     fn inputs(&self) -> Cow<'_, [Socket]>;
+    fn input(&mut self, idx: SocketIndex) -> Option<&Socket>;
     fn outputs(&self) -> Cow<'_, [Socket]>;
     fn spawn_state(&self) -> Box<dyn Any + Send>;
     fn process_erased(
@@ -103,9 +106,15 @@ impl<N: Node> ErasedNode for N {
     fn inputs(&self) -> Cow<'_, [Socket]> {
         Node::inputs(self)
     }
+
+    fn input(&mut self, idx: SocketIndex) -> Option<&Socket> {
+        Node::input(self, idx)
+    }
+
     fn outputs(&self) -> Cow<'_, [Socket]> {
         Node::outputs(self)
     }
+
     fn spawn_state(&self) -> Box<dyn Any + Send> {
         Box::new(self.init_state())
     }
@@ -125,7 +134,7 @@ impl<N: Node> ErasedNode for N {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct Link {
     pub from: (NodeID, SocketIndex),
     pub to: (NodeID, SocketIndex),
@@ -135,5 +144,6 @@ pub struct Link {
 #[derive(Debug, Default, Clone)]
 pub struct NodeGraph {
     pub nodes: SlotMap<NodeID, Box<dyn ErasedNode>>,
-    pub links: SlotMap<LinkID, Link>,
+    // pub links: SlotMap<LinkID, Link>,
+    pub links: HashSet<Link>,
 }
