@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
     model::{
@@ -27,21 +29,21 @@ impl Master {
 impl Node for Master {
     type State = ();
 
-    fn inputs(&self) -> &'static [Socket] {
-        Self::INPUTS
+    fn inputs(&self) -> Cow<'_, [Socket]> {
+        Cow::Borrowed(Self::INPUTS)
     }
 
-    fn outputs(&self) -> &'static [Socket] {
-        Self::OUTPUTS
+    fn outputs(&self) -> Cow<'_, [Socket]> {
+        Cow::Borrowed(Self::OUTPUTS)
     }
 
     fn init_state(&self) -> Self::State {}
 
     fn process(
         &self,
+        pool: &mut PoolExecutor,
         _: &mut Self::State,
         _: &ProjectData,
-        pool: &mut PoolExecutor,
         _: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],

@@ -100,9 +100,9 @@ pub fn execute_block<'a>(
             }
         }
         node.process_erased(
+            &mut executor,
             state_pool.get_mut(step.node_id),
             project,
-            &mut executor,
             block_start,
             &step.input_slots,
             &step.output_slots,

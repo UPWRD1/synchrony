@@ -1,4 +1,4 @@
-use std::f32::consts::PI;
+use std::{borrow::Cow, f32::consts::PI};
 
 use crate::{
     engine::{SlotIndex, tick::Tick},
@@ -131,22 +131,22 @@ impl BiquadFilter {
 impl Node for BiquadFilter {
     type State = BiquadFilterState;
 
-    fn inputs(&self) -> &[crate::model::flow::Socket] {
-        Self::INPUTS
+    fn inputs(&self) -> Cow<'_, [Socket]> {
+        Cow::Borrowed(Self::INPUTS)
     }
     fn init_state(&self) -> Self::State {
         BiquadFilterState { s1: 0.0, s2: 0.0 }
     }
 
-    fn outputs(&self) -> &[crate::model::flow::Socket] {
-        Self::OUTPUTS
+    fn outputs(&self) -> Cow<'_, [Socket]> {
+        Cow::Borrowed(Self::OUTPUTS)
     }
 
     fn process(
         &self,
+        pool: &mut crate::engine::bbp::PoolExecutor,
         state: &mut Self::State,
         _: &crate::model::project::ProjectData,
-        pool: &mut crate::engine::bbp::PoolExecutor,
         _: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],

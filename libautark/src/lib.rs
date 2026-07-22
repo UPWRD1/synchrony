@@ -87,7 +87,7 @@ mod tests {
 
         engine.apply(AddLink {
             from: (song_node, 0),
-            to: (master_node_id, 0),
+            to: (filter1, 0),
         })?;
 
         engine.apply(AddClip::<Audio> {

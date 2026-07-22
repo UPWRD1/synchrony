@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{borrow::Cow, marker::PhantomData};
 
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
@@ -47,9 +47,9 @@ impl Node for TrackReader<Audio> {
 
     fn process(
         &self,
-        state: &mut Self::State,
-        project: &ProjectData,
         pool: &mut PoolExecutor,
+        _state: &mut Self::State,
+        project: &ProjectData,
         block_start: Tick,
         _: &[SlotIndex],
         outputs: &[SlotIndex],
@@ -60,11 +60,11 @@ impl Node for TrackReader<Audio> {
         }
     }
 
-    fn inputs(&self) -> &[Socket] {
-        &[]
+    fn inputs(&self) -> Cow<'_, [Socket]> {
+        Cow::Borrowed(&[])
     }
 
-    fn outputs(&self) -> &[Socket] {
-        Self::OUTPUTS
+    fn outputs(&self) -> Cow<'_, [Socket]> {
+        Cow::Borrowed(Self::OUTPUTS)
     }
 }

@@ -61,10 +61,10 @@ impl ProjectData {
     ) -> Result<LinkID> {
         let from_kind = self.socket_kind_of(from, true)?;
         let to_kind = self.socket_kind_of(to, false)?;
-        if !from_kind.can_connect_to(*to_kind) {
+        if !from_kind.can_connect_to(to_kind) {
             return Err(EngineError::IncompatibleSockets {
-                from: *from_kind,
-                to: *to_kind,
+                from: from_kind,
+                to: to_kind,
             }
             .into());
         }
@@ -150,7 +150,7 @@ impl ProjectData {
         &self,
         endpoint: (NodeID, SocketIndex),
         is_output: bool,
-    ) -> Result<&DataKind> {
+    ) -> Result<DataKind> {
         let node = self
             .graph
             .nodes
@@ -164,6 +164,7 @@ impl ProjectData {
         list.get(endpoint.1)
             .map(|s| &s.kind)
             .ok_or(EngineError::NodeNotFound(endpoint.0).into())
+            .cloned()
     }
 
     /// Kahn's algorithm topological sort + a bump-allocated buffer slot per
