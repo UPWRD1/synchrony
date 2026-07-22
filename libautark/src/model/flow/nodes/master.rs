@@ -1,7 +1,5 @@
-use std::any::Any;
-
 use crate::{
-    engine::{SlotIndex, bbp::PoolExecutor, engineconfig::EngineConfig, tick::Tick},
+    engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
     model::{
         DataKind,
         flow::{Node, Socket},
@@ -27,6 +25,8 @@ impl Master {
 }
 
 impl Node for Master {
+    type State = ();
+
     fn inputs(&self) -> &'static [Socket] {
         Self::INPUTS
     }
@@ -34,13 +34,15 @@ impl Node for Master {
     fn outputs(&self) -> &'static [Socket] {
         Self::OUTPUTS
     }
+
+    fn init_state(&self) -> Self::State {}
+
     fn process(
         &self,
+        _: &mut Self::State,
         _: &ProjectData,
         pool: &mut PoolExecutor,
-        _: &mut dyn Any,
         _: Tick,
-        _: &EngineConfig,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
     ) {

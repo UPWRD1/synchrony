@@ -127,12 +127,16 @@ impl ProjectData {
         Ok(())
     }
 
-    pub fn add_track<K: Kind>(&mut self, name: String) -> Result<<K::Track as Stored>::Id>
+    pub fn add_track<K: Kind>(
+        &mut self,
+        name: String,
+        channels: u16,
+    ) -> Result<<K::Track as Stored>::Id>
     where
         TrackReader<K>: Node,
     {
         let track_id = K::Track::access_mut(self).insert(K::Track::new(name));
-        let reader_node = TrackReader::<K>::new(track_id);
+        let reader_node = TrackReader::<K>::new(track_id, channels);
         let node_id = self.graph.nodes.insert(Box::new(reader_node));
         *K::Track::access_mut(self)[track_id].linked_node_id_mut() = Some(node_id);
         Ok(track_id)

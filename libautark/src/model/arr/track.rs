@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use slotmap::new_key_type;
 
 use crate::{
-    engine::{engineconfig::EngineConfig, tick::Tick},
+    engine::tick::Tick,
     model::{
         Audio, Kind, Renderable, Stored, arr::clip::AudioClipID, flow::NodeID, project::ProjectData,
     },
@@ -75,15 +75,9 @@ impl Track<Audio> for AudioTrack {
 }
 
 impl Renderable for AudioTrack {
-    fn render(
-        &self,
-        proj: &ProjectData,
-        buf: &mut [f32],
-        block_start: Tick,
-        config: &EngineConfig,
-    ) {
+    fn render(&self, proj: &ProjectData, buf: &mut [f32], block_start: Tick, channels: u16) {
         // Deinterleave
-        let block_len: Tick = (buf.len() / config.config.channels as usize).into();
+        let block_len: Tick = (buf.len() / channels as usize).into();
         let block_end = block_start + block_len;
 
         let lookback = self
@@ -104,7 +98,7 @@ impl Renderable for AudioTrack {
             let Some(clip) = proj.clips.get(clip_id) else {
                 panic!("Invalid clip");
             };
-            clip.render(proj, buf, block_start, config)
+            clip.render(proj, buf, block_start, channels)
         }
     }
 }

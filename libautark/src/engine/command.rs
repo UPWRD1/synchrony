@@ -15,6 +15,7 @@ pub trait Command {
 pub struct AddTrack<K: Kind> {
     pub name: String,
     pub kind: K,
+    pub channels: u16,
 }
 
 impl<K: Kind> Command for AddTrack<K>
@@ -23,7 +24,7 @@ where
 {
     type Output = <K::Track as Stored>::Id;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
-        project.add_track::<K>(self.name)
+        project.add_track::<K>(self.name, self.channels)
     }
 }
 

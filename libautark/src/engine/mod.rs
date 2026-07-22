@@ -72,7 +72,6 @@ pub fn execute_block<'a>(
     schedule: &CompiledGraph,
     project: &ProjectData,
     block_start: Tick,
-    config: &EngineConfig,
     pool: &'a mut BlockBufferPool,
     state_pool: &mut NodeStatePool,
 ) -> &'a [f32] {
@@ -100,12 +99,11 @@ pub fn execute_block<'a>(
                 }
             }
         }
-        node.process(
+        node.process_erased(
+            state_pool.get_mut(step.node_id),
             project,
             &mut executor,
-            state_pool.get_mut(step.node_id),
             block_start,
-            config,
             &step.input_slots,
             &step.output_slots,
         );
@@ -179,7 +177,6 @@ impl Engine {
         use cpal::traits::StreamTrait;
 
         let config = EngineConfig::create()?;
-        let channels = config.config.channels;
         let schedule = project
             .compile_graph()
             .expect("fresh project graph is always acyclic");
@@ -192,7 +189,7 @@ impl Engine {
             .graph
             .nodes
             .iter()
-            .map(|(id, node)| (id, node.init_state(channels)))
+            .map(|(id, node)| (id, node.spawn_state()))
             .collect();
 
         let (mut update_tx, update_rx) = rtrb::RingBuffer::<GraphUpdate>::new(UPDATE_RING_CAPACITY);
@@ -251,6 +248,11 @@ impl Engine {
     pub fn sample_rate(&self) -> u32 {
         self.config.config.sample_rate
     }
+
+    pub fn channels(&self) -> u16 {
+        self.config.config.channels
+    }
+
     /// Not a Command on purpose — asset import is I/O-bound and, unlike
     /// graph/clip edits, isn't meaningfully undo-able in the same sense.
     /// A real engine would still route this through some queue so it
@@ -323,12 +325,7 @@ impl Engine {
 
         let state_additions: Vec<_> = new_ids
             .difference(&old_ids)
-            .map(|&id| {
-                (
-                    id,
-                    self.current.graph.nodes[id].init_state(self.config.config.channels),
-                )
-            })
+            .map(|&id| (id, self.current.graph.nodes[id].spawn_state()))
             .collect();
         let state_removals: Vec<_> = old_ids.difference(&new_ids).copied().collect();
 
@@ -407,7 +404,6 @@ impl Engine {
                         schedule,
                         project,
                         Tick(start),
-                        &config,
                         &mut buffer_pool,
                         &mut state_pool,
                     );

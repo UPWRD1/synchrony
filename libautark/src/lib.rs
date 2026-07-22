@@ -14,7 +14,6 @@ mod tests {
     use crate::engine::{AddClip, AddLink, AddTrack};
     use crate::model::Audio;
     use crate::model::flow::nodes::eq::BiquadFilter;
-    use crate::model::flow::nodes::lowpass::LowpassFilter;
     use crate::model::project::ProjectData;
     use anyhow::Result;
 
@@ -42,6 +41,7 @@ mod tests {
 
         let filter1 = engine.apply(AddNode {
             node: BiquadFilter::new(
+                engine.channels(),
                 model::flow::nodes::eq::FilterType::HighPass,
                 engine.sample_rate(),
                 1600.0,
@@ -52,6 +52,7 @@ mod tests {
 
         let filter2 = engine.apply(AddNode {
             node: BiquadFilter::new(
+                engine.channels(),
                 model::flow::nodes::eq::FilterType::HighPass,
                 engine.sample_rate(),
                 1600.0,
@@ -73,6 +74,7 @@ mod tests {
         let song_track = engine.apply(AddTrack {
             name: "Song".to_string(),
             kind: Audio,
+            channels: engine.channels(),
         })?;
 
         let song_node = engine

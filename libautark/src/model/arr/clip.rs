@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use slotmap::new_key_type;
 
 use crate::{
-    engine::{engineconfig::EngineConfig, tick::Tick},
+    engine::tick::Tick,
     model::{Audio, Kind, Renderable, Stored, asset::AudioAssetID},
 };
 
@@ -57,9 +57,8 @@ impl Renderable for AudioClip {
         proj: &crate::model::project::ProjectData,
         buf: &mut [f32],
         block_start: Tick,
-        config: &EngineConfig,
+        channels: u16,
     ) {
-        let channels = config.config.channels;
         let block_len: Tick = (buf.len() / channels as usize).into();
 
         let block_end = block_start + block_len;

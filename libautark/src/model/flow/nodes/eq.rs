@@ -1,7 +1,7 @@
 use std::f32::consts::PI;
 
 use crate::{
-    engine::SlotIndex,
+    engine::{SlotIndex, tick::Tick},
     model::{
         DataKind,
         flow::{Node, Socket},
@@ -23,6 +23,7 @@ pub enum FilterType {
 
 #[derive(Clone, Debug)]
 pub struct BiquadFilter {
+    channels: usize,
     filter_type: FilterType,
     // Coefficients normalized by a0
     b0: f32,
@@ -32,7 +33,7 @@ pub struct BiquadFilter {
     a2: f32,
 }
 
-struct BiquadFilterState {
+pub struct BiquadFilterState {
     // Delay lines (history buffers)
     s1: f32,
     s2: f32,
@@ -53,8 +54,16 @@ impl BiquadFilter {
 
     pub const BUTTERWORTH_Q: f32 = 0.707;
 
-    pub fn new(filter_type: FilterType, sample_rate: u32, freq: f32, q: f32, db_gain: f32) -> Self {
+    pub fn new(
+        channels: u16,
+        filter_type: FilterType,
+        sample_rate: u32,
+        freq: f32,
+        q: f32,
+        db_gain: f32,
+    ) -> Self {
         let mut f = Self {
+            channels: channels as usize,
             filter_type,
             b0: 1.0,
             b1: 0.0,
@@ -120,11 +129,13 @@ impl BiquadFilter {
 }
 
 impl Node for BiquadFilter {
+    type State = BiquadFilterState;
+
     fn inputs(&self) -> &[crate::model::flow::Socket] {
         Self::INPUTS
     }
-    fn init_state(&self, _channels: u16) -> Box<dyn std::any::Any + Send> {
-        Box::new(BiquadFilterState { s1: 0.0, s2: 0.0 })
+    fn init_state(&self) -> Self::State {
+        BiquadFilterState { s1: 0.0, s2: 0.0 }
     }
 
     fn outputs(&self) -> &[crate::model::flow::Socket] {
@@ -133,24 +144,18 @@ impl Node for BiquadFilter {
 
     fn process(
         &self,
+        state: &mut Self::State,
         _: &crate::model::project::ProjectData,
         pool: &mut crate::engine::bbp::PoolExecutor,
-        state: &mut dyn std::any::Any,
-        _: crate::engine::tick::Tick,
-        config: &crate::engine::engineconfig::EngineConfig,
+        _: Tick,
         inputs: &[SlotIndex],
         outputs: &[SlotIndex],
     ) {
-        let channels = config.config.channels as usize;
         let input_buf = pool.get_input(inputs[0]);
         let output_buf = pool.get_output(outputs[0]);
 
-        let state = state
-            .downcast_mut::<BiquadFilterState>()
-            .expect("state pool handed BiquadFilter the wrong state type");
-
-        for (frame, chunk) in input_buf.chunks(channels).enumerate() {
-            let out_start = frame * channels;
+        for (frame, chunk) in input_buf.chunks(self.channels).enumerate() {
+            let out_start = frame * self.channels;
             for (ch, &x) in chunk.iter().enumerate() {
                 let y = (self.b0 * x) + state.s1;
 

@@ -1,7 +1,7 @@
-use std::{any::Any, marker::PhantomData};
+use std::marker::PhantomData;
 
 use crate::{
-    engine::{SlotIndex, bbp::PoolExecutor, engineconfig::EngineConfig, tick::Tick},
+    engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
     model::{
         Audio, DataKind, Kind, Renderable, Stored,
         flow::{Node, Socket},
@@ -11,15 +11,17 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct TrackReader<K: Kind> {
+    channels: u16,
     kind: PhantomData<K>,
     id: <K::Track as Stored>::Id,
 }
 
 impl<K: Kind> TrackReader<K> {
-    pub fn new(id: <K::Track as Stored>::Id) -> Self {
+    pub fn new(id: <K::Track as Stored>::Id, channels: u16) -> Self {
         Self {
             kind: PhantomData,
             id,
+            channels,
         }
     }
 }
@@ -32,20 +34,29 @@ impl TrackReader<Audio> {
     }];
 }
 
+pub struct TrackReaderState {
+    // block_start: Tick,
+}
+
 impl Node for TrackReader<Audio> {
+    type State = TrackReaderState;
+
+    fn init_state(&self) -> Self::State {
+        TrackReaderState {}
+    }
+
     fn process(
         &self,
+        state: &mut Self::State,
         project: &ProjectData,
         pool: &mut PoolExecutor,
-        _: &mut dyn Any,
         block_start: Tick,
-        config: &EngineConfig,
         _: &[SlotIndex],
         outputs: &[SlotIndex],
     ) {
         if let Some(track) = project.tracks.get(self.id) {
             let output_buf = pool.get_output(outputs[0]);
-            track.render(project, output_buf, block_start, config);
+            track.render(project, output_buf, block_start, self.channels);
         }
     }
 
