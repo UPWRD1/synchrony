@@ -319,6 +319,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "autark"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "iced",
+ "libautark",
+ "rmp-serde",
+ "serde",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1609,19 +1621,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
-name = "konduttur"
-version = "0.1.0"
+name = "kurbo"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1618d4ebd923e97d67e7cd363d80aef35fe961005cbbbb3d2dad8bdd1bc63440"
 dependencies = [
- "anyhow",
- "iced",
- "konduttur_lib",
- "rmp-serde",
- "serde",
- "thiserror 2.0.18",
+ "arrayvec",
+ "smallvec",
 ]
 
 [[package]]
-name = "konduttur_lib"
+name = "lazy_static"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "libautark"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1638,22 +1654,6 @@ dependencies = [
  "symphonia",
  "thiserror 2.0.18",
 ]
-
-[[package]]
-name = "kurbo"
-version = "0.10.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1618d4ebd923e97d67e7cd363d80aef35fe961005cbbbb3d2dad8bdd1bc63440"
-dependencies = [
- "arrayvec",
- "smallvec",
-]
-
-[[package]]
-name = "lazy_static"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "libc"

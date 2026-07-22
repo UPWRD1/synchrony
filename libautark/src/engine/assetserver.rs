@@ -87,15 +87,6 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
         // Decode the packet into audio samples, ignoring any decode errors.
         match decoder.decode(&packet) {
             Ok(audio_buf) => {
-                // The decoded audio samples may now be accessed via the generic audio buffer
-                // returned by the decoder. You may match on the buffer to access a sample-format
-                // specific buffer, or use generic routines to copy out the audio samples in the
-                // desired sample format.
-                //
-                // In the example below, we will copy the all the samples into a vector in
-                // the f32 sample format in channel interleaved order.
-
-                // Ensure the vector is large enough to hold all the samples.
                 scratch.resize(audio_buf.samples_interleaved(), f32::MID);
 
                 // Copy the audio samples from the generic audio buffer to the vector in interleaved
@@ -110,7 +101,7 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
             Err(_) => break,
         }
     }
-
+    println!();
     let resampled = resample_rubato(&samples, channels, source_sample_rate, target_sample_rate)?;
 
     Ok(AudioAsset {

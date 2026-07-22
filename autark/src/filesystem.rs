@@ -1,7 +1,7 @@
 use std::{fs::File, io::Read, path::Path};
 
 use anyhow::Result;
-use konduttur_lib::model::project::ProjectData;
+use libautark::model::project::ProjectData;
 
 fn save_project_data(proj: ProjectData, path: &Path) -> Result<()> {
     let mut file = File::create(path)?;
