@@ -6,11 +6,13 @@ use serde::{Deserialize, Serialize};
 pub struct Tick(pub u64);
 
 impl Tick {
-    pub fn from_secs(secs: f64, sample_rate: u32) -> Tick {
-        Self((secs * sample_rate as f64).round() as u64)
+    #[must_use]
+    pub fn from_secs(secs: f64, sample_rate: u32) -> Self {
+        Self((secs * f64::from(sample_rate)).round() as u64)
     }
+    #[must_use]
     pub fn as_secs(self, sample_rate: u32) -> f64 {
-        self.0 as f64 / sample_rate as f64
+        self.0 as f64 / f64::from(sample_rate)
     }
 }
 
@@ -27,7 +29,7 @@ impl From<usize> for Tick {
 }
 
 impl std::ops::Add for Tick {
-    type Output = Tick;
+    type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
         Self(self.0 + rhs.0)
@@ -35,7 +37,7 @@ impl std::ops::Add for Tick {
 }
 
 impl std::ops::Sub for Tick {
-    type Output = Tick;
+    type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
         Self(self.0 - rhs.0)

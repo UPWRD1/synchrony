@@ -1,47 +1,36 @@
+//! The core audio engine. Used to manipulate `Project`s, hold the audio thread, and more.
 pub mod assetserver;
 pub mod bbp;
 pub mod command;
+pub mod constants;
 pub mod engineconfig;
+pub mod errors;
 pub mod state;
 pub mod tick;
+pub mod transport;
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
 use crate::engine::bbp::BlockBufferPool;
 pub use crate::engine::command::*;
-use crate::engine::state::{
-    GARBAGE_RING_CAPACITY, Garbage, GraphUpdate, MAX_NODES, NodeStatePool, UPDATE_RING_CAPACITY,
+use crate::engine::constants::{
+    GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, MAX_NODES, UPDATE_RING_CAPACITY,
 };
+use crate::engine::state::{Garbage, GraphUpdate, NodeStatePool};
+use crate::engine::transport::Transport;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 
-use crate::model::flow::SocketID;
-use crate::model::{DataKind, asset::AudioAssetID, flow::NodeID, project::ProjectData};
+use crate::model::{asset::AudioAssetID, flow::NodeID, project::ProjectData};
 
 use anyhow::Result;
-use thiserror::Error;
 
-// ---------------------------------------------------------------------
-// Compiled schedule
-// ---------------------------------------------------------------------
 pub type SlotIndex = usize;
-
-// #[derive(Debug, Clone)]
-// pub struct SummingCommand {
-//     /// The target scratch slot where the summed audio will be collected
-//     pub target_scratch_slot: SlotIndex,
-//     /// All the source slots that need to be blended together into the scratch slot
-//     pub source_slots: Vec<SlotIndex>,
-// }
 
 pub struct ScheduleStep {
     pub node_id: NodeID,
-    /// Pre-compiled instructions telling the engine what to sum before running the node
-    /// One entry per input socket; each entry lists every buffer slot
-    /// feeding it (0 = unconnected, 1 = normal, 2+ = fan-in summed).
     pub input_slots: Vec<SlotIndex>,
-    /// One entry per output socket.
     pub output_slots: Vec<SlotIndex>,
 }
 
@@ -50,25 +39,6 @@ pub struct CompiledGraph {
     pub buffer_count: usize,
     pub master_output_slot: SlotIndex,
 }
-
-#[derive(Debug, Error)]
-pub enum EngineError {
-    TrackNotFound,
-    NodeNotFound(NodeID),
-    SocketNotFound(SocketID),
-    IncompatibleSockets { from: DataKind, to: DataKind },
-    WouldCreateCycle,
-}
-
-impl std::fmt::Display for EngineError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-// ---------------------------------------------------------------------
-// Execution — runs once per audio callback
-// ---------------------------------------------------------------------
 
 /// Runs the compiled schedule for one block and returns the master mix.
 pub fn execute_block<'a>(
@@ -89,19 +59,6 @@ pub fn execute_block<'a>(
         let step = &schedule.steps[i];
         let node = &project.graph.nodes[step.node_id];
 
-        // // 1. Process engine-level fan-in matrix configurations
-        // for sum_cmd in &step.prep_sums {
-        //     let target = executor.get_output(sum_cmd.target_scratch_slot);
-
-        //     for &source_slot in &sum_cmd.source_slots {
-        //         let source = executor.get_input(source_slot);
-
-        //         // Simple additive loop: easily optimized by hardware auto-vectorization
-        //         for sample_idx in 0..pool.block_size {
-        //             target[sample_idx] += source[sample_idx];
-        //         }
-        //     }
-        // }
         node.process_erased(
             &mut executor,
             state_pool.get_mut(step.node_id),
@@ -116,47 +73,10 @@ pub fn execute_block<'a>(
     // })
 }
 
-/// What the audio thread reads. Today this is "the whole Project plus its
-/// compiled schedule"; splitting Project into a separately-published
-/// TimelineSnapshot (per the earlier design) is a later optimization that
-/// doesn't change anything on the Engine/Command side.
+/// What the audio thread reads.
 pub struct RenderState {
     pub project: Arc<ProjectData>,
     pub schedule: Arc<CompiledGraph>,
-}
-
-#[derive(Debug, Clone)]
-#[repr(u8)]
-pub enum TransportState {
-    Stopped,
-    Playing,
-    Recording,
-    Paused,
-}
-
-#[derive(Debug, Default)]
-pub struct Transport(AtomicU8);
-
-impl Transport {
-    pub fn new() -> Self {
-        Self(AtomicU8::new(0))
-    }
-    fn transport(&self, to: TransportState) {
-        self.0.store(to as u8, Ordering::Relaxed);
-    }
-
-    pub fn play(&self) {
-        self.transport(TransportState::Playing);
-    }
-
-    pub fn stop(&self) {
-        self.transport(TransportState::Stopped);
-    }
-
-    #[inline]
-    pub fn is_playing(&self) -> bool {
-        self.0.load(Ordering::Relaxed) == TransportState::Playing as u8
-    }
 }
 
 pub struct Engine {
@@ -174,18 +94,16 @@ pub struct AudioManager {
     _stream: cpal::Stream,
 }
 
-pub const MAX_BUFFER_SLOTS: usize = 4096;
 impl Engine {
     pub fn new(project: Arc<ProjectData>) -> Result<Self> {
         use cpal::traits::StreamTrait;
 
         let config = EngineConfig::create()?;
-        let schedule = project
-            .compile_graph()
-            .expect("fresh project graph is always acyclic");
-        if schedule.buffer_count > MAX_BUFFER_SLOTS || project.graph.nodes.len() > MAX_NODES {
-            panic!("Graph is too large");
-        }
+        let schedule = project.compile_graph()?;
+        assert!(
+            !(schedule.buffer_count > MAX_BUFFER_SLOTS || project.graph.nodes.len() > MAX_NODES),
+            "Graph is too large"
+        );
 
         // Initial state for every node already in the fresh graph.
         let state_additions: Vec<_> = project
@@ -219,10 +137,10 @@ impl Engine {
         });
 
         let transport = Arc::new(Transport::default());
-        let playhead = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let playhead = Arc::new(AtomicU64::new(0));
 
         let stream = Self::build_stream::<f32>(
-            config.clone(),
+            &config,
             transport.clone(),
             playhead.clone(),
             update_rx,
@@ -248,11 +166,11 @@ impl Engine {
         &self.current
     }
 
-    pub fn sample_rate(&self) -> u32 {
+    pub const fn sample_rate(&self) -> u32 {
         self.config.config.sample_rate
     }
 
-    pub fn channels(&self) -> u16 {
+    pub const fn channels(&self) -> u16 {
         self.config.config.channels
     }
 
@@ -274,7 +192,7 @@ impl Engine {
     {
         let mut next = (*self.current).clone();
 
-        let res = self.apply_command(&mut next, cmd)?;
+        let res = Self::apply_command(&mut next, cmd)?;
         self.commit(next);
         Ok(res)
     }
@@ -302,7 +220,7 @@ impl Engine {
         self.publish_current();
     }
 
-    /// Builds the next GraphUpdate off the audio thread and pushes it
+    /// Builds the next `GraphUpdate` off the audio thread and pushes it
     /// through the ring. Allocation happens here, on the control thread —
     /// that's fine, this is not the real-time path.
     fn publish_current(&mut self) {
@@ -322,7 +240,7 @@ impl Engine {
         let old_ids: std::collections::HashSet<NodeID> = self
             .undo_stack
             .last()
-            .map(|p| p.graph.nodes.keys().collect())
+            .map(|proj| proj.graph.nodes.keys().collect())
             .unwrap_or_default();
         let new_ids: std::collections::HashSet<NodeID> = self.current.graph.nodes.keys().collect();
 
@@ -344,7 +262,7 @@ impl Engine {
         }
     }
 
-    fn apply_command<T>(&self, project: &mut ProjectData, cmd: T) -> Result<T::Output>
+    fn apply_command<T>(project: &mut ProjectData, cmd: T) -> Result<T::Output>
     where
         T: Command,
     {
@@ -352,15 +270,14 @@ impl Engine {
     }
 
     pub fn move_playhead(&self, to: Tick) -> Result<()> {
-        self.playhead
-            .swap(to.0, std::sync::atomic::Ordering::Relaxed);
+        self.playhead.swap(to.0, Ordering::Relaxed);
         Ok(())
     }
 
     fn build_stream<T>(
-        config: EngineConfig,
+        config: &EngineConfig,
         transport: Arc<Transport>,
-        playhead: Arc<std::sync::atomic::AtomicU64>,
+        playhead: Arc<AtomicU64>,
         mut update_rx: rtrb::Consumer<GraphUpdate>,
         mut garbage_tx: rtrb::Producer<Garbage>,
     ) -> Result<cpal::Stream>
@@ -368,12 +285,12 @@ impl Engine {
         T: cpal::SizedSample + cpal::FromSample<f32>,
     {
         use cpal::traits::DeviceTrait;
-
+        let channels = config.config.channels;
         let device = config.device.clone();
         let mut buffer_pool = BlockBufferPool::new(MAX_BUFFER_SLOTS, 1024);
+
         let mut state_pool = NodeStatePool::new();
         let mut current: Option<GraphUpdate> = None;
-
         let stream = device.build_output_stream(
             config.config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
@@ -388,7 +305,7 @@ impl Engine {
                         }
                     }
 
-                    let frame_count = data.len() / config.config.channels as usize;
+                    let frame_count = data.len() / channels as usize;
                     let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
                     if !transport.is_playing() {
@@ -413,7 +330,7 @@ impl Engine {
                     for (dst, &src) in data.iter_mut().zip(mixed) {
                         *dst = T::from_sample(src);
                     }
-                })
+                });
             },
             move |err| eprintln!("audio stream error: {err}"),
             None,

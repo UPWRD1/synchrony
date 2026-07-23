@@ -27,7 +27,7 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
     let path = path.into();
     // Create a media source. Note that the MediaSource trait is automatically implemented for File,
     // among other types.
-    let file = Box::new(File::open(&path).unwrap());
+    let file = Box::new(File::open(&path)?);
 
     // Create the media source stream using the boxed media source from above.
     let mss = MediaSourceStream::new(file, Default::default());
@@ -42,9 +42,7 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
     let dec_opts: AudioDecoderOptions = Default::default();
 
     // Probe the media source stream for a format.
-    let mut format = symphonia::default::get_probe()
-        .probe(&hint, mss, fmt_opts, meta_opts)
-        .unwrap();
+    let mut format = symphonia::default::get_probe().probe(&hint, mss, fmt_opts, meta_opts)?;
 
     // Get the default audio track.
     let track = format.default_track(TrackType::Audio).unwrap();
@@ -58,12 +56,10 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
         .sample_rate
         .unwrap_or(target_sample_rate); // no rate in the stream -> assume it matches; can't do better
     // Create a decoder for the track.
-    let mut decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(
-            track.codec_params.as_ref().unwrap().audio().unwrap(),
-            &dec_opts,
-        )
-        .unwrap();
+    let mut decoder = symphonia::default::get_codecs().make_audio_decoder(
+        track.codec_params.as_ref().unwrap().audio().unwrap(),
+        &dec_opts,
+    )?;
 
     // Store the track identifier, we'll use it to filter packets.
     let track_id = track.id;
@@ -72,13 +68,13 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
         .codec_params()
         .channels
         .as_ref()
-        .map_or_else(|| 1u16, |c| c.count() as u16);
+        .map_or_else(|| 1u16, |channels| channels.count() as u16);
     let mut scratch: Vec<f32> = vec![];
     let mut samples: Vec<f32> = vec![]; // Vec::with_capacity(channels as usize * expected_sample_rate as usize * 2);
     let mut total_sample_count = 0;
 
     // Read and decode all packets from the format reader.
-    while let Some(packet) = format.next_packet().unwrap() {
+    while let Some(packet) = format.next_packet()? {
         // If the packet does not belong to the selected track, skip it.
         if packet.track_id != track_id {
             continue;
@@ -102,7 +98,7 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
         }
     }
     println!();
-    let resampled = resample_rubato(&samples, channels, source_sample_rate, target_sample_rate)?;
+    let resampled = resample_rubato(&samples, channels, source_sample_rate, target_sample_rate);
 
     Ok(AudioAsset {
         samples: Arc::new(resampled),
@@ -116,19 +112,14 @@ pub fn load_audio_asset(path: impl Into<PathBuf>, target_sample_rate: u32) -> Re
 /// Sinc-interpolated resample of interleaved f32 samples, with proper
 /// anti-aliasing filtering. Import-time only — never called from the
 /// audio thread, so the allocations inside rubato's `process()` are fine.
-fn resample_rubato(
-    interleaved: &[f32],
-    channels: u16,
-    from_rate: u32,
-    to_rate: u32,
-) -> Result<Vec<f32>> {
+fn resample_rubato(interleaved: &[f32], channels: u16, from_rate: u32, to_rate: u32) -> Vec<f32> {
     println!("Converting sample rate {from_rate} Hz -> {to_rate} Hz");
     if from_rate == to_rate || interleaved.is_empty() {
-        return Ok(interleaved.to_vec());
+        return interleaved.to_vec();
     }
     let channels = channels as usize;
     let frame_count = interleaved.len() / channels;
-    let f_ratio = to_rate as f64 / from_rate as f64;
+    let f_ratio = f64::from(to_rate) / f64::from(from_rate);
 
     let mut outdata: Vec<f32> = vec![0.0; 2 * channels * (frame_count as f64 * f_ratio) as usize];
 
@@ -154,9 +145,6 @@ fn resample_rubato(
         .process_all_into_buffer(&input_adapter, &mut output_adapter, frame_count, None)
         .unwrap();
 
-    println!(
-        "Processed {} input frames into {} output frames",
-        nbr_in, nbr_out
-    );
-    Ok(outdata)
+    println!("Processed {nbr_in} input frames into {nbr_out} output frames");
+    outdata
 }

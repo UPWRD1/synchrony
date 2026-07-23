@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::{
-    engine::{CompiledGraph, EngineError, ScheduleStep, SlotIndex, tick::Tick},
+    engine::{CompiledGraph, ScheduleStep, SlotIndex, errors::EngineError, tick::Tick},
     model::{
         DataKind, Kind, Stored,
         arr::{
@@ -10,8 +10,10 @@ use crate::{
         },
         asset::{AudioAsset, AudioAssetID},
         flow::{
-            Node, NodeGraph, NodeID, Socket, SocketDirection, SocketID, SocketMeta,
+            Node, NodeID,
+            graph::NodeGraph,
             nodes::{master::Master, trackreader::TrackReader},
+            socket::{Socket, SocketDirection, SocketID, SocketMeta},
         },
     },
 };
@@ -159,7 +161,7 @@ impl ProjectData {
                 .map(|&in_id| {
                     self.graph
                         .links
-                        .get(&in_id) // O(1) lookup — no per-socket Vec to build anymore
+                        .get(in_id) // O(1) lookup — no per-socket Vec to build anymore
                         .and_then(|src| socket_slot.get(src))
                         .copied()
                         .unwrap_or(0) // unconnected -> reserved silence slot

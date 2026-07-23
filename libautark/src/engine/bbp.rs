@@ -1,12 +1,14 @@
+//! Home of the `BlockBufferPool`, a pool of memory created for the exclusive usage of the audio thread.
 use crate::engine::SlotIndex;
 
 pub struct BlockBufferPool {
-    /// Contiguous pre-allocated block: (buffer_count * block_size)
+    /// Contiguous pre-allocated block: (`buffer_count` * `block_size`)
     memory: Vec<f32>,
     pub block_size: usize,
 }
 
 impl BlockBufferPool {
+    #[must_use]
     pub fn new(buffer_count: usize, block_size: usize) -> Self {
         Self {
             memory: vec![0.0f32; buffer_count * block_size],
@@ -22,7 +24,7 @@ impl BlockBufferPool {
     /// Creates an execution context that allows unsafe, arbitrary slot slicing
     /// while keeping the unsafe code safely isolated.
     #[inline]
-    pub fn executor(&mut self) -> PoolExecutor {
+    pub const fn executor(&mut self) -> PoolExecutor {
         PoolExecutor {
             ptr: self.memory.as_mut_ptr(),
             block_size: self.block_size,
@@ -43,7 +45,10 @@ impl PoolExecutor {
     /// Get a read-only view of a slot.
     /// Safety: Assumes no other code is actively writing to this slot right now.
     #[inline]
+    #[must_use]
     pub fn get_input<'a>(&self, slot: SlotIndex) -> &'a [f32] {
+        // SAFETY: Assumes no other code is actively writing to this slot.
+        // This should be the case unless you somehow alias the same `PoolExecutor` across threads
         unsafe {
             let offset = slot * self.block_size;
             debug_assert!(offset + self.block_size <= self.total_len);
@@ -55,6 +60,8 @@ impl PoolExecutor {
     /// Safety: Assumes no other code is actively reading or writing to this slot right now.
     #[inline]
     pub fn get_output<'a>(&mut self, slot: SlotIndex) -> &'a mut [f32] {
+        // SAFETY: Assumes no other code is actively writing to this slot.
+        // This should be the case unless you somehow alias the same `PoolExecutor` across threads
         unsafe {
             let offset = slot * self.block_size;
             debug_assert!(offset + self.block_size <= self.total_len);

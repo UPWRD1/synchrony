@@ -21,6 +21,7 @@ pub struct Duplicate<K: Kind> {
 }
 
 impl<K: Kind> Duplicate<K> {
+    #[must_use]
     pub fn new() -> Self {
         Self { kind: PhantomData }
     }

@@ -73,6 +73,7 @@ impl Kind for Audio {
 }
 
 impl DataKind {
+    #[must_use]
     pub fn can_connect_to(self, dest: Self) -> bool {
         self == dest || (self == Self::Audio && dest == Self::Cv)
     }

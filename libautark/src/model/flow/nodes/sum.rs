@@ -9,12 +9,13 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Sum<K: Kind> {
     kind: PhantomData<K>,
 }
 
 impl<K: Kind> Sum<K> {
+    #[must_use]
     pub fn new() -> Self {
         Self { kind: PhantomData }
     }

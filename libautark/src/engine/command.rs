@@ -4,7 +4,11 @@ use crate::{
     engine::tick::Tick,
     model::{
         Kind, Stored,
-        flow::{Link, Node, NodeID, Socket, SocketID, nodes::trackreader::TrackReader},
+        flow::{
+            Node, NodeID,
+            nodes::trackreader::TrackReader,
+            socket::{Socket, SocketID},
+        },
         project::ProjectData,
     },
 };
@@ -107,7 +111,8 @@ pub struct AddNodeInput<K: Kind> {
 }
 
 impl<K: Kind> AddNodeInput<K> {
-    pub fn new(node_id: NodeID) -> Self {
+    #[must_use]
+    pub const fn new(node_id: NodeID) -> Self {
         Self {
             node_id,
             _p: PhantomData,

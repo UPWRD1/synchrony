@@ -98,7 +98,7 @@ impl Renderable for AudioTrack {
             let Some(clip) = proj.clips.get(clip_id) else {
                 panic!("Invalid clip");
             };
-            clip.render(proj, buf, block_start, channels)
+            clip.render(proj, buf, block_start, channels);
         }
     }
 }

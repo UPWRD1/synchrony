@@ -3,13 +3,9 @@ use std::{any::Any, sync::Arc};
 use slotmap::SecondaryMap;
 
 use crate::{
-    engine::CompiledGraph,
+    engine::{CompiledGraph, constants::MAX_NODES},
     model::{flow::NodeID, project::ProjectData},
 };
-
-pub const MAX_NODES: usize = 1024;
-pub const UPDATE_RING_CAPACITY: usize = 32;
-pub const GARBAGE_RING_CAPACITY: usize = 64;
 
 /// Everything a topology change implies, computed entirely off the audio
 /// thread and handed over as one atomic unit so the schedule and the state

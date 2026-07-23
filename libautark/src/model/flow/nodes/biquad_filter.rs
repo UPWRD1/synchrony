@@ -42,6 +42,7 @@ pub struct BiquadFilterState {
 impl BiquadFilter {
     pub const BUTTERWORTH_Q: f32 = 0.707;
 
+    #[must_use]
     pub fn new(
         channels: u16,
         filter_type: FilterType,
@@ -69,7 +70,7 @@ impl BiquadFilter {
         let omega = 2.0 * PI * frequency / sample_rate as f32;
         let alpha = omega.sin() / (2.0 * q);
         let cos_omega = omega.cos();
-        let beta = (a.powf(2.0) + 1.0).sqrt();
+        // let beta = (a.powf(2.0) + 1.0).sqrt();
 
         let (raw_b0, raw_b1, raw_b2, raw_a0, raw_a1, raw_a2) = match self.filter_type {
             FilterType::Peaking => (
@@ -101,7 +102,7 @@ impl BiquadFilter {
                 (b, b * 2.0, b, 1.0 + alpha, -2.0 * cos_omega, 1.0 - alpha)
             }
             FilterType::HighPass => {
-                let b = (1.0 + cos_omega) * 0.5;
+                let b = f32::midpoint(1.0, cos_omega);
                 (b, -b * 2.0, b, 1.0 + alpha, -2.0 * cos_omega, 1.0 - alpha)
             }
         };

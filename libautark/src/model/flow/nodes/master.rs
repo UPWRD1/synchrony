@@ -18,7 +18,7 @@ impl Node for Master {
     fn process(
         &self,
         pool: &mut PoolExecutor,
-        _: &mut Self::State,
+        (): &mut (),
         _: &ProjectData,
         _: Tick,
         inputs: &[SlotIndex],

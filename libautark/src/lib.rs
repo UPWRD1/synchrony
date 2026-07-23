@@ -1,3 +1,54 @@
+#[forbid(
+    unused_unsafe,
+    clippy::fallible_impl_from,
+    clippy::used_underscore_binding,
+    clippy::used_underscore_items,
+    clippy::undocumented_unsafe_blocks
+)]
+#[deny(
+    unreachable_pub,
+    unused_qualifications,
+    // clippy::pedantic,
+    clippy::cargo,
+    clippy::nursery,
+    clippy::perf,
+    clippy::correctness,
+    clippy::suspicious,
+    clippy::complexity,
+    clippy::style,
+    clippy::branches_sharing_code,
+    clippy::use_self,
+    clippy::box_collection,
+    clippy::boxed_local,
+    clippy::redundant_allocation,
+    clippy::deref_by_slicing,
+    clippy::cloned_instead_of_copied,
+    unused_allocation,
+    clippy::ptr_arg,
+    clippy::needless_pass_by_ref_mut,
+    clippy::needless_pass_by_value,
+    clippy::min_ident_chars
+)]
+#[warn(
+    // missing_docs,
+    clippy::unwrap_in_result,
+    clippy::large_stack_frames,
+    // clippy::panic,
+    clippy::dbg_macro,
+    // clippy::unwrap_used,
+    // clippy::restriction
+)]
+#[allow(
+    // warnings,
+    // unused_variables,
+    // clippy::must_use_candidate,
+    clippy::default_trait_access,
+    clippy::return_self_not_must_use,
+    clippy::type_complexity,
+    clippy::diverging_sub_expression,
+    clippy::missing_panics_doc,
+    unstable_name_collisions
+)]
 pub mod engine;
 pub mod model;
 
@@ -39,7 +90,7 @@ mod tests {
 
         let song_len = {
             let asset = &engine.project().assets[song_asset];
-            asset.samples.len() as u64 / asset.channels as u64
+            asset.samples.len() as u64 / u64::from(asset.channels)
         };
 
         let filter1 = engine.apply(AddNode {
@@ -98,7 +149,7 @@ mod tests {
 
         let clap_len = {
             let asset = &engine.project().assets[clap_asset];
-            asset.samples.len() as u64 / asset.channels as u64
+            asset.samples.len() as u64 / u64::from(asset.channels)
         };
 
         let (clap_track, clap_node) = engine.apply(AddTrack {
