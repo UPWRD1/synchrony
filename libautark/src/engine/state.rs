@@ -29,6 +29,7 @@ pub enum Garbage {
 /// Per-node mutable DSP state (Tier 3). Lives exclusively on the audio
 /// thread; never appears in `ProjectData`, so undo/redo and cloning never
 /// touch it and it never needs to be `Sync`.
+#[derive(Default)]
 pub struct NodeStatePool {
     states: SecondaryMap<NodeID, Box<dyn Any + Send>>,
 }
