@@ -107,7 +107,7 @@ impl ProjectData {
     {
         let track_id = K::Track::access_mut(self).insert(K::Track::new(name));
         let reader_node = TrackReader::<K>::new(track_id, channels);
-        let node_id = self.graph.nodes.insert(Box::new(reader_node));
+        let node_id = self.graph.add_node(reader_node);
         *K::Track::access_mut(self)[track_id].linked_node_id_mut() = Some(node_id);
         Ok((track_id, node_id))
     }
@@ -139,78 +139,57 @@ impl ProjectData {
     pub fn compile_graph(&self) -> Result<CompiledGraph> {
         let order = self.graph.topo_sort()?;
 
-        // Tracks output socket -> physical layout buffer slot mapping
-        let mut output_slots: HashMap<SocketID, SlotIndex> = HashMap::new();
-
-        // Slot 0 is permanently reserved for Silence/Unconnected states.
-        // Node outputs start assigning from Slot index 1.
-        let mut buffer_count = 1usize;
+        let mut socket_slot: HashMap<SocketID, SlotIndex> = HashMap::new();
+        let mut buffer_count = 1usize; // slot 0 reserved for silence
 
         for &node_id in &order {
-            let outputs = self.graph.outputs_of(node_id);
-            for id in outputs {
-                output_slots.insert(*id, buffer_count);
+            for &out_id in self.graph.outputs_of(node_id) {
+                socket_slot.insert(out_id, buffer_count);
                 buffer_count += 1;
             }
         }
 
         let mut steps = Vec::with_capacity(order.len());
-
         for &node_id in &order {
-            let inputs = self.graph.inputs_of(node_id);
-            let outputs = self.graph.outputs_of(node_id);
+            let input_ids = self.graph.inputs_of(node_id);
+            let output_ids = self.graph.outputs_of(node_id);
 
-            // Temporary container to collect all lines feeding each input socket
-            let mut raw_input_sources: HashMap<SocketID, Vec<usize>> =
-                HashMap::with_capacity(inputs.len());
-            for (dest, src) in self.graph.links.iter().filter(|(dest, src)| {
-                let dest = self.graph.sockets[**dest].owner;
-                dest == node_id
-            }) {
-                if let Some(&slot) = output_slots.get(src) {
-                    raw_input_sources.get_mut(dest).unwrap().push(slot);
-                }
-            }
+            let input_slots: Vec<SlotIndex> = input_ids
+                .iter()
+                .map(|&in_id| {
+                    self.graph
+                        .links
+                        .get(&in_id) // O(1) lookup — no per-socket Vec to build anymore
+                        .and_then(|src| socket_slot.get(src))
+                        .copied()
+                        .unwrap_or(0) // unconnected -> reserved silence slot
+                })
+                .collect();
 
-            // let mut prep_sums = Vec::new();
-            let mut input_slots = Vec::with_capacity(inputs.len());
-
-            // Process every single input socket to calculate fan-in mapping metadata
-            for (_, sources) in raw_input_sources {
-                match sources.len() {
-                    0 => {
-                        // Unconnected: Route straight to the safe permanent Silence slot
-                        input_slots.push(0);
-                    }
-                    1 => {
-                        // Normal 1-to-1 link: Bind node straight to the source buffer slot
-                        input_slots.push(sources[0]);
-                    }
-                    _ => {
-                        panic!("multiple nodes in one socket!")
-                    }
-                }
-            }
-
-            let output_slots: Vec<SlotIndex> = (outputs).iter().map(|i| output_slots[i]).collect();
+            let output_slots: Vec<SlotIndex> = output_ids
+                .iter()
+                .map(|&out_id| socket_slot[&out_id])
+                .collect();
 
             steps.push(ScheduleStep {
                 node_id,
-
                 input_slots,
                 output_slots,
             });
         }
 
-        let master_output_socket = self.graph.outputs_of(self.master_node_id)[0];
-
-        let master_output_slot = *output_slots
-            .get(&master_output_socket)
+        let master_output_slot = self
+            .graph
+            .node_sockets
+            .get(self.master_node_id)
+            .and_then(|(_, outs)| outs.first())
+            .and_then(|&id| socket_slot.get(&id))
+            .copied()
             .ok_or(EngineError::NodeNotFound(self.master_node_id))?;
 
         Ok(CompiledGraph {
             steps,
-            buffer_count, // Reflects the combination of outputs + required scratch spaces
+            buffer_count,
             master_output_slot,
         })
     }

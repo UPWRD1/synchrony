@@ -4,7 +4,7 @@ use crate::{
     engine::tick::Tick,
     model::{
         Kind, Stored,
-        flow::{Link, Node, NodeID, SocketID, nodes::trackreader::TrackReader},
+        flow::{Link, Node, NodeID, Socket, SocketID, nodes::trackreader::TrackReader},
         project::ProjectData,
     },
 };
@@ -118,9 +118,7 @@ impl<K: Kind> AddNodeInput<K> {
 impl<K: Kind> Command for AddNodeInput<K> {
     type Output = SocketID; // index of the newly created socket
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
-        project
-            .graph
-            .add_node_input(self.node_id, K::into_datakind())
+        project.add_socket_to_node(self.node_id, Socket::new(K::into_datakind(), "in", true))
     }
 }
 

@@ -79,6 +79,7 @@ mod tests {
             kind: Audio,
             channels: engine.channels(),
         })?;
+
         let song_out = engine.project().graph.outputs_of(song_node)[0];
 
         engine.apply(AddLink {

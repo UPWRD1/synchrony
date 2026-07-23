@@ -269,10 +269,10 @@ impl NodeGraph {
             anyhow::bail!("Invalid connection: {:?} -> {:?}", from.kind, to.kind)
         }
 
-        let prev_link = self.links.insert(from_id, to_id);
+        let prev_link = self.links.insert(to_id, from_id);
 
         if self.topo_sort().is_err() {
-            self.remove_link(from_id, to_id);
+            self.remove_link(from_id, to_id)?;
             return Err(EngineError::WouldCreateCycle.into());
         }
         Ok(prev_link)
@@ -286,16 +286,22 @@ impl NodeGraph {
     /// link validation (which only needs to know whether an order exists).
     pub fn topo_sort(&self) -> Result<Vec<NodeID>> {
         let mut in_degree: HashMap<NodeID, usize> = self.nodes.keys().map(|id| (id, 0)).collect();
+        let mut successors: HashMap<NodeID, Vec<NodeID>> =
+            self.nodes.keys().map(|id| (id, Vec::new())).collect();
 
-        for (to, from) in self.links.iter() {
-            let to_node = self.sockets[*to].owner;
-            let from_node = self.sockets[*from].owner;
+        // links: HashMap<SocketID /*input*/, SocketID /*source output*/>
+        for (&input_socket, &source_socket) in &self.links {
+            let to_node = self.sockets[input_socket].owner;
+            let from_node = self.sockets[source_socket].owner;
             *in_degree
                 .get_mut(&to_node)
                 .ok_or(EngineError::NodeNotFound(to_node))? += 1;
+            successors
+                .get_mut(&from_node)
+                .ok_or(EngineError::NodeNotFound(from_node))?
+                .push(to_node);
         }
 
-        let mut remaining = in_degree.clone();
         let mut queue: VecDeque<NodeID> = in_degree
             .iter()
             .filter(|(_, d)| **d == 0)
@@ -305,15 +311,11 @@ impl NodeGraph {
 
         while let Some(n) = queue.pop_front() {
             order.push(n);
-            for (to, from) in self.links.iter().filter(|(_, from)| {
-                let from_node = self.sockets[**from].owner;
-                from_node == n
-            }) {
-                let to_node = self.sockets[*to].owner;
-                let d = remaining.get_mut(&to_node).unwrap();
+            for &succ in &successors[&n] {
+                let d = in_degree.get_mut(&succ).unwrap();
                 *d -= 1;
                 if *d == 0 {
-                    queue.push_back(to_node);
+                    queue.push_back(succ);
                 }
             }
         }
