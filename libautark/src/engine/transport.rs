@@ -13,9 +13,12 @@ pub enum TransportState {
 pub struct Transport(AtomicU8);
 
 impl Transport {
+    /// Creates a new [`Transport`].
+    #[must_use]
     pub const fn new() -> Self {
         Self(AtomicU8::new(0))
     }
+    #[inline]
     fn transport(&self, to: TransportState) {
         self.0.store(to as u8, Ordering::Relaxed);
     }

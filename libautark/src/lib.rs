@@ -8,7 +8,7 @@
 #[deny(
     unreachable_pub,
     unused_qualifications,
-    // clippy::pedantic,
+    clippy::pedantic,
     clippy::cargo,
     clippy::nursery,
     clippy::perf,
@@ -18,8 +18,6 @@
     clippy::style,
     clippy::branches_sharing_code,
     clippy::use_self,
-    clippy::box_collection,
-    clippy::boxed_local,
     clippy::redundant_allocation,
     clippy::deref_by_slicing,
     clippy::cloned_instead_of_copied,
@@ -43,9 +41,7 @@
     // unused_variables,
     // clippy::must_use_candidate,
     clippy::default_trait_access,
-    clippy::return_self_not_must_use,
     clippy::type_complexity,
-    clippy::diverging_sub_expression,
     clippy::missing_panics_doc,
     unstable_name_collisions
 )]
@@ -174,9 +170,7 @@ mod tests {
             to: master_sum_in1,
         })?;
 
-        engine
-            .playhead
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+        engine.move_playhead(engine::tick::Tick(0))?;
 
         engine.transport.play();
         println!("Playing... press enter to quit");

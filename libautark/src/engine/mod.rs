@@ -1,5 +1,6 @@
 //! The core audio engine. Used to manipulate `Project`s, hold the audio thread, and more.
 pub mod assetserver;
+pub mod audiomanager;
 pub mod bbp;
 pub mod command;
 pub mod constants;
@@ -13,12 +14,11 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, atomic::AtomicU64};
 
+use crate::engine::audiomanager::AudioManager;
 use crate::engine::bbp::BlockBufferPool;
 pub use crate::engine::command::*;
-use crate::engine::constants::{
-    GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, MAX_NODES, UPDATE_RING_CAPACITY,
-};
-use crate::engine::state::{Garbage, GraphUpdate, NodeStatePool};
+use crate::engine::constants::{MAX_BUFFER_SLOTS, MAX_NODES};
+use crate::engine::state::{GraphUpdate, NodeStatePool};
 use crate::engine::transport::Transport;
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
 
@@ -89,15 +89,17 @@ pub struct Engine {
     audio_manager: AudioManager,
 }
 
-pub struct AudioManager {
-    update_tx: rtrb::Producer<GraphUpdate>,
-    _stream: cpal::Stream,
-}
-
 impl Engine {
+    /// .
+    ///
+    /// # Panics
+    ///
+    /// Panics if .
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if .
     pub fn new(project: Arc<ProjectData>) -> Result<Self> {
-        use cpal::traits::StreamTrait;
-
         let config = EngineConfig::create()?;
         let schedule = project.compile_graph()?;
         assert!(
@@ -113,40 +115,17 @@ impl Engine {
             .map(|(id, node)| (id, node.spawn_state()))
             .collect();
 
-        let (mut update_tx, update_rx) = rtrb::RingBuffer::<GraphUpdate>::new(UPDATE_RING_CAPACITY);
-        let (garbage_tx, mut garbage_rx) = rtrb::RingBuffer::<Garbage>::new(GARBAGE_RING_CAPACITY);
-
-        // Seed the ring with the initial graph so the audio thread has
-        // something to play from the very first callback.
-        let _ = update_tx.push(GraphUpdate {
+        let init_update = GraphUpdate {
             project: project.clone(),
             schedule: Arc::new(schedule),
             state_additions,
             state_removals: Vec::new(),
-        });
-
-        // Background thread: the only place anything from the audio thread
-        // actually gets dropped/deallocated.
-        std::thread::spawn(move || {
-            loop {
-                while let Ok(garbage) = garbage_rx.pop() {
-                    drop(garbage);
-                }
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-        });
-
+        };
         let transport = Arc::new(Transport::default());
         let playhead = Arc::new(AtomicU64::new(0));
 
-        let stream = Self::build_stream::<f32>(
-            &config,
-            transport.clone(),
-            playhead.clone(),
-            update_rx,
-            garbage_tx,
-        )?;
-        stream.play()?; // device stream runs continuously; transport gates output
+        let audio_manager =
+            AudioManager::new(init_update, &config, transport.clone(), playhead.clone())?;
 
         Ok(Self {
             config,
@@ -155,10 +134,7 @@ impl Engine {
             current: project,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
-            audio_manager: AudioManager {
-                update_tx,
-                _stream: stream,
-            },
+            audio_manager,
         })
     }
 
@@ -272,70 +248,5 @@ impl Engine {
     pub fn move_playhead(&self, to: Tick) -> Result<()> {
         self.playhead.swap(to.0, Ordering::Relaxed);
         Ok(())
-    }
-
-    fn build_stream<T>(
-        config: &EngineConfig,
-        transport: Arc<Transport>,
-        playhead: Arc<AtomicU64>,
-        mut update_rx: rtrb::Consumer<GraphUpdate>,
-        mut garbage_tx: rtrb::Producer<Garbage>,
-    ) -> Result<cpal::Stream>
-    where
-        T: cpal::SizedSample + cpal::FromSample<f32>,
-    {
-        use cpal::traits::DeviceTrait;
-        let channels = config.config.channels;
-        let device = config.device.clone();
-        let mut buffer_pool = BlockBufferPool::new(MAX_BUFFER_SLOTS, 1024);
-
-        let mut state_pool = NodeStatePool::new();
-        let mut current: Option<GraphUpdate> = None;
-        let stream = device.build_output_stream(
-            config.config,
-            move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
-                assert_no_alloc::assert_no_alloc(|| {
-                    data.fill(T::from_sample(0.0));
-                    // Tier 1: drain any pending structural updates. Zero
-                    // allocation: everything was pre-built off-thread.
-                    while let Ok(mut update) = update_rx.pop() {
-                        state_pool.apply(&mut update, &mut garbage_tx);
-                        if let Some(old) = current.replace(update) {
-                            let _ = garbage_tx.push(Garbage::Update(old));
-                        }
-                    }
-
-                    let frame_count = data.len() / channels as usize;
-                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
-
-                    if !transport.is_playing() {
-                        return;
-                    }
-
-                    let Some(GraphUpdate {
-                        project, schedule, ..
-                    }) = current.as_ref()
-                    else {
-                        return;
-                    };
-
-                    let mixed = execute_block(
-                        schedule,
-                        project,
-                        Tick(start),
-                        &mut buffer_pool,
-                        &mut state_pool,
-                    );
-
-                    for (dst, &src) in data.iter_mut().zip(mixed) {
-                        *dst = T::from_sample(src);
-                    }
-                });
-            },
-            move |err| eprintln!("audio stream error: {err}"),
-            None,
-        )?;
-
-        Ok(stream)
     }
 }

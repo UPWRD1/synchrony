@@ -31,7 +31,8 @@ pub struct NodeStatePool {
 }
 
 impl NodeStatePool {
-    pub fn new() -> Self {
+    /// Creates a new [`NodeStatePool`].
+    pub(crate) fn new() -> Self {
         Self {
             states: SecondaryMap::with_capacity(MAX_NODES),
         }
