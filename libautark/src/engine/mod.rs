@@ -15,7 +15,8 @@ use crate::engine::state::{
     GARBAGE_RING_CAPACITY, Garbage, GraphUpdate, MAX_NODES, NodeStatePool, UPDATE_RING_CAPACITY,
 };
 use crate::engine::{engineconfig::EngineConfig, tick::Tick};
-use crate::model::flow::SocketIndex;
+
+use crate::model::flow::SocketID;
 use crate::model::{DataKind, asset::AudioAssetID, flow::NodeID, project::ProjectData};
 
 use anyhow::Result;
@@ -54,7 +55,7 @@ pub struct CompiledGraph {
 pub enum EngineError {
     TrackNotFound,
     NodeNotFound(NodeID),
-    SocketNotFound(NodeID, SocketIndex),
+    SocketNotFound(SocketID),
     IncompatibleSockets { from: DataKind, to: DataKind },
     WouldCreateCycle,
 }
@@ -377,6 +378,7 @@ impl Engine {
             config.config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
                 assert_no_alloc::assert_no_alloc(|| {
+                    data.fill(T::from_sample(0.0));
                     // Tier 1: drain any pending structural updates. Zero
                     // allocation: everything was pre-built off-thread.
                     while let Ok(mut update) = update_rx.pop() {
@@ -390,7 +392,6 @@ impl Engine {
                     let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
 
                     if !transport.is_playing() {
-                        data.fill(T::from_sample(0.0));
                         return;
                     }
 
@@ -398,7 +399,6 @@ impl Engine {
                         project, schedule, ..
                     }) = current.as_ref()
                     else {
-                        data.fill(T::from_sample(0.0));
                         return;
                     };
 

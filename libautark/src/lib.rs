@@ -10,8 +10,8 @@ pub mod model;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::AddNode;
     use crate::engine::{AddClip, AddLink, AddTrack};
+    use crate::engine::{AddNode, AddNodeInput};
     use crate::model::Audio;
     use crate::model::flow::nodes::biquad_filter::BiquadFilter;
     use crate::model::flow::nodes::sum::Sum;
@@ -27,12 +27,14 @@ mod tests {
     }
 
     fn helper() -> Result<()> {
-        // --- 2. Build the project through the real API, not by hand --------
         let mut engine = {
             let project = Arc::new(ProjectData::new());
             Engine::new(project)?
         };
         let master_node_id = engine.project().master_node_id;
+
+        let master_in = engine.project().graph.inputs_of(master_node_id)[0];
+
         let song_asset = engine.load_asset("./assets/AUDIO_4892.mp3")?;
 
         let song_len = {
@@ -51,36 +53,25 @@ mod tests {
             ),
         })?;
 
-        let filter2 = engine.apply(AddNode {
-            node: BiquadFilter::new(
-                engine.channels(),
-                model::flow::nodes::biquad_filter::FilterType::HighPass,
-                engine.sample_rate(),
-                1600.0,
-                BiquadFilter::BUTTERWORTH_Q,
-                0.0,
-            ),
-        })?;
+        let filter1_in = engine.project().graph.inputs_of(filter1)[0];
+        let filter1_out = engine.project().graph.outputs_of(filter1)[0];
 
         let master_sum = engine.apply(AddNode {
             node: Sum::<Audio>::new(),
         })?;
 
+        let master_sum_in0 = engine.apply(AddNodeInput::<Audio>::new(master_sum))?;
+
+        let master_sum_out = engine.project().graph.outputs_of(master_sum)[0];
+
         engine.apply(AddLink {
-            from: (filter1, 0),
-            to: (master_sum, 0),
+            from: filter1_out,
+            to: master_sum_in0,
         })?;
 
-        dbg!(&engine.project().graph);
-
-        // engine.apply(AddLink {
-        //     from: (filter2, 0),
-        //     to: (master_sum, 0),
-        // })?;
-
         engine.apply(AddLink {
-            from: (master_sum, 0),
-            to: (master_node_id, 0),
+            from: master_sum_out,
+            to: master_in,
         })?;
 
         let (song_track, song_node) = engine.apply(AddTrack {
@@ -88,10 +79,11 @@ mod tests {
             kind: Audio,
             channels: engine.channels(),
         })?;
+        let song_out = engine.project().graph.outputs_of(song_node)[0];
 
         engine.apply(AddLink {
-            from: (song_node, 0),
-            to: (filter1, 0),
+            from: song_out,
+            to: filter1_in,
         })?;
 
         engine.apply(AddClip::<Audio> {
@@ -101,30 +93,34 @@ mod tests {
             asset_id: song_asset,
         })?;
 
-        // let clap_asset = engine.load_asset("./assets/clap.mp3")?;
+        let clap_asset = engine.load_asset("./assets/clap.mp3")?;
 
-        // let clap_len = {
-        //     let asset = &engine.project().assets[clap_asset];
-        //     asset.samples.len() as u64 / asset.channels as u64
-        // };
+        let clap_len = {
+            let asset = &engine.project().assets[clap_asset];
+            asset.samples.len() as u64 / asset.channels as u64
+        };
 
-        // let (clap_track, clap_node) = engine.apply(AddTrack {
-        //     name: "Clap".to_string(),
-        //     kind: Audio,
-        //     channels: engine.channels(),
-        // })?;
+        let (clap_track, clap_node) = engine.apply(AddTrack {
+            name: "Clap".to_string(),
+            kind: Audio,
+            channels: engine.channels(),
+        })?;
 
-        // engine.apply(AddClip::<Audio> {
-        //     track: clap_track,
-        //     start: engine::tick::Tick(0),
-        //     end: engine::tick::Tick(clap_len),
-        //     asset_id: clap_asset,
-        // })?;
+        engine.apply(AddClip::<Audio> {
+            track: clap_track,
+            start: engine::tick::Tick(1000),
+            end: engine::tick::Tick(clap_len),
+            asset_id: clap_asset,
+        })?;
 
-        // engine.apply(AddLink {
-        //     from: (clap_node, 0),
-        //     to: (master_sum, 1),
-        // })?;
+        let clap_out = engine.project().graph.outputs_of(clap_node)[0];
+
+        let master_sum_in1 = engine.apply(AddNodeInput::<Audio>::new(master_sum))?;
+
+        engine.apply(AddLink {
+            from: clap_out,
+            to: master_sum_in1,
+        })?;
 
         engine
             .playhead

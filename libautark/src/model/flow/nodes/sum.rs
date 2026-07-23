@@ -1,10 +1,10 @@
-use std::{borrow::Cow, marker::PhantomData};
+use std::marker::PhantomData;
 
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
     model::{
         Audio, DataKind, Kind,
-        flow::{Node, Socket},
+        flow::{MultiInputNode, Node, Socket},
         project::ProjectData,
     },
 };
@@ -12,25 +12,15 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Sum<K: Kind> {
     kind: PhantomData<K>,
-    cached_inputs: Vec<Socket>,
 }
 
 impl<K: Kind> Sum<K> {
     pub fn new() -> Self {
-        Self {
-            kind: PhantomData,
-            cached_inputs: vec![],
-        }
+        Self { kind: PhantomData }
     }
 }
 
-impl Sum<Audio> {
-    const OUTPUTS: &'static [Socket] = &[Socket {
-        name: "audio out",
-        kind: DataKind::Audio,
-        visible: true,
-    }];
-}
+impl Sum<Audio> {}
 
 pub struct SumState {}
 
@@ -60,27 +50,13 @@ impl Node for Sum<Audio> {
         }
     }
 
-    fn inputs(&self) -> Cow<'_, [Socket]> {
-        Cow::Borrowed(&self.cached_inputs)
+    fn spec_in(&self) -> Vec<Socket> {
+        vec![]
     }
 
-    fn input(&mut self, idx: crate::model::flow::SocketIndex) -> Option<&Socket> {
-        match idx {
-            i if i < self.cached_inputs.len() => self.cached_inputs.get(i),
-            i if i == self.cached_inputs.len() => {
-                let s = Socket {
-                    kind: DataKind::Audio,
-                    name: format!("Input {i}").leak(),
-                    visible: true,
-                };
-                self.cached_inputs.push(s);
-                Some(&self.cached_inputs[i])
-            }
-            _ => None,
-        }
-    }
-
-    fn outputs(&self) -> Cow<'_, [Socket]> {
-        Cow::Borrowed(Self::OUTPUTS)
+    fn spec_out(&self) -> Vec<Socket> {
+        vec![Socket::new(DataKind::Audio, "out", true)]
     }
 }
+
+impl MultiInputNode for Sum<Audio> {}

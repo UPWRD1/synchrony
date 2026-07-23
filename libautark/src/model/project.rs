@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 
 use crate::{
     engine::{CompiledGraph, EngineError, ScheduleStep, SlotIndex, tick::Tick},
@@ -10,7 +10,7 @@ use crate::{
         },
         asset::{AudioAsset, AudioAssetID},
         flow::{
-            Link, Node, NodeGraph, NodeID, SocketIndex,
+            Node, NodeGraph, NodeID, Socket, SocketDirection, SocketID, SocketMeta,
             nodes::{master::Master, trackreader::TrackReader},
         },
     },
@@ -33,7 +33,7 @@ impl ProjectData {
         let mut graph = NodeGraph::default();
 
         let master_node = Master;
-        let master_node_id = graph.nodes.insert(Box::new(master_node));
+        let master_node_id = graph.add_node(master_node);
         Self {
             tracks: SlotMap::with_key(),
             clips: SlotMap::with_key(),
@@ -43,38 +43,12 @@ impl ProjectData {
         }
     }
 
-    pub fn remove_link(
-        &mut self,
-        from: (NodeID, SocketIndex),
-        to: (NodeID, SocketIndex),
-    ) -> Result<()> {
-        self.graph.links.retain(|l| !(l.from == from && l.to == to));
-        Ok(())
+    pub fn remove_link(&mut self, from: SocketID, to: SocketID) -> Result<()> {
+        self.graph.remove_link(from, to)
     }
 
-    pub fn add_link(
-        &mut self,
-        from: (NodeID, SocketIndex),
-        to: (NodeID, SocketIndex),
-    ) -> Result<Option<Link>> {
-        let from_kind = self.socket_kind_of(from, true)?;
-        let to_kind = self.socket_kind_of(to, false)?;
-        if !from_kind.can_connect_to(to_kind) {
-            return Err(EngineError::IncompatibleSockets {
-                from: from_kind,
-                to: to_kind,
-            }
-            .into());
-        }
-        let link = Link { from, to };
-        // Prevent multiple inputs into the same slot
-        let prev_link = self.graph.links.replace(link);
-
-        if self.topo_sort().is_err() {
-            self.graph.links.retain(|l| !(l.from == from && l.to == to));
-            return Err(EngineError::WouldCreateCycle.into());
-        }
-        Ok(prev_link)
+    pub fn add_link(&mut self, from_id: SocketID, to_id: SocketID) -> Result<Option<SocketID>> {
+        self.graph.add_link(from_id, to_id)
     }
 
     pub fn move_clip<K: Kind>(
@@ -116,10 +90,7 @@ impl ProjectData {
         let linked_id = track
             .linked_node_id()
             .expect("Track was orphaned from node");
-        self.graph.nodes.remove(linked_id);
-        self.graph
-            .links
-            .retain(|l| l.from.0 != linked_id && l.to.0 != linked_id);
+        self.graph.purge(linked_id);
         for clip_id in track.clips().values() {
             K::Clip::access_mut(self).remove(*clip_id);
         }
@@ -141,84 +112,44 @@ impl ProjectData {
         Ok((track_id, node_id))
     }
 
-    pub fn add_node<N: Node>(&mut self, node: N) -> NodeID {
-        self.graph.nodes.insert(Box::new(node))
+    pub fn add_socket_to_node(&mut self, node_id: NodeID, socket: Socket) -> Result<SocketID> {
+        let id = self.graph.sockets.insert(SocketMeta {
+            owner: node_id,
+            direction: SocketDirection::Input,
+            kind: socket.kind,
+            name: socket.name,
+            visible: socket.visible,
+        });
+        self.graph.node_sockets[node_id].0.push(id);
+        Ok(id)
     }
 
-    pub fn socket_kind_of(
-        &mut self,
-        endpoint: (NodeID, SocketIndex),
-        is_output: bool,
-    ) -> Result<DataKind> {
-        let node = self
-            .graph
-            .nodes
-            .get_mut(endpoint.0)
-            .ok_or(EngineError::NodeNotFound(endpoint.0))?;
-        if is_output {
-            let list = node.outputs();
-            list.get(endpoint.1).map(|s| &s.kind).cloned()
-        } else {
-            let input = node.input(endpoint.1);
-            input.map(|s| s.kind)
-        }
-        .ok_or(EngineError::SocketNotFound(endpoint.0, endpoint.1).into())
+    pub fn remove_node_input(&mut self, node_id: NodeID) -> Result<()> {
+        todo!()
     }
 
-    /// Kahn's algorithm topological sort + a bump-allocated buffer slot per
-    /// output socket. No slot reuse yet (see the buffer-pooling discussion —
-    /// this is the register-allocation pass that'd go here later); today's
-    /// graphs are tiny so it doesn't matter yet.
-    /// Kahn's algorithm, shared by compile_graph (which needs the order) and
-    /// link validation (which only needs to know whether an order exists).
-    fn topo_sort(&self) -> Result<Vec<NodeID>> {
-        let mut in_degree: HashMap<NodeID, usize> =
-            self.graph.nodes.keys().map(|id| (id, 0)).collect();
-
-        for link in self.graph.links.iter() {
-            *in_degree
-                .get_mut(&link.to.0)
-                .ok_or(EngineError::NodeNotFound(link.to.0))? += 1;
-        }
-
-        let mut remaining = in_degree.clone();
-        let mut queue: VecDeque<NodeID> = in_degree
-            .iter()
-            .filter(|(_, d)| **d == 0)
-            .map(|(&id, _)| id)
-            .collect();
-        let mut order = Vec::with_capacity(self.graph.nodes.len());
-
-        while let Some(n) = queue.pop_front() {
-            order.push(n);
-            for link in self.graph.links.iter().filter(|l| l.from.0 == n) {
-                let d = remaining.get_mut(&link.to.0).unwrap();
-                *d -= 1;
-                if *d == 0 {
-                    queue.push_back(link.to.0);
-                }
-            }
-        }
-        if order.len() != self.graph.nodes.len() {
-            return Err(EngineError::WouldCreateCycle.into());
-        }
-        Ok(order)
+    pub fn socket_kind_of(&mut self, endpoint: SocketID) -> Result<DataKind> {
+        self.graph
+            .sockets
+            .get(endpoint)
+            .map(|s| s.kind)
+            .ok_or(EngineError::SocketNotFound(endpoint).into())
     }
 
     pub fn compile_graph(&self) -> Result<CompiledGraph> {
-        let order = self.topo_sort()?;
+        let order = self.graph.topo_sort()?;
 
         // Tracks output socket -> physical layout buffer slot mapping
-        let mut output_slot: HashMap<(NodeID, SocketIndex), SlotIndex> = HashMap::new();
+        let mut output_slots: HashMap<SocketID, SlotIndex> = HashMap::new();
 
         // Slot 0 is permanently reserved for Silence/Unconnected states.
         // Node outputs start assigning from Slot index 1.
         let mut buffer_count = 1usize;
 
         for &node_id in &order {
-            let node = &self.graph.nodes[node_id];
-            for i in 0..node.outputs().len() {
-                output_slot.insert((node_id, i as SocketIndex), buffer_count);
+            let outputs = self.graph.outputs_of(node_id);
+            for id in outputs {
+                output_slots.insert(*id, buffer_count);
                 buffer_count += 1;
             }
         }
@@ -226,21 +157,26 @@ impl ProjectData {
         let mut steps = Vec::with_capacity(order.len());
 
         for &node_id in &order {
-            let node = &self.graph.nodes[node_id];
+            let inputs = self.graph.inputs_of(node_id);
+            let outputs = self.graph.outputs_of(node_id);
 
             // Temporary container to collect all lines feeding each input socket
-            let mut raw_input_sources = vec![Vec::new(); node.inputs().len()];
-            for link in self.graph.links.iter().filter(|l| l.to.0 == node_id) {
-                if let Some(&slot) = output_slot.get(&link.from) {
-                    raw_input_sources[link.to.1].push(slot);
+            let mut raw_input_sources: HashMap<SocketID, Vec<usize>> =
+                HashMap::with_capacity(inputs.len());
+            for (dest, src) in self.graph.links.iter().filter(|(dest, src)| {
+                let dest = self.graph.sockets[**dest].owner;
+                dest == node_id
+            }) {
+                if let Some(&slot) = output_slots.get(src) {
+                    raw_input_sources.get_mut(dest).unwrap().push(slot);
                 }
             }
 
             // let mut prep_sums = Vec::new();
-            let mut input_slots = Vec::with_capacity(node.inputs().len());
+            let mut input_slots = Vec::with_capacity(inputs.len());
 
             // Process every single input socket to calculate fan-in mapping metadata
-            for sources in raw_input_sources {
+            for (_, sources) in raw_input_sources {
                 match sources.len() {
                     0 => {
                         // Unconnected: Route straight to the safe permanent Silence slot
@@ -256,9 +192,7 @@ impl ProjectData {
                 }
             }
 
-            let output_slots: Vec<SlotIndex> = (0..node.outputs().len())
-                .map(|i| output_slot[&(node_id, i as SocketIndex)])
-                .collect();
+            let output_slots: Vec<SlotIndex> = (outputs).iter().map(|i| output_slots[i]).collect();
 
             steps.push(ScheduleStep {
                 node_id,
@@ -268,8 +202,10 @@ impl ProjectData {
             });
         }
 
-        let master_output_slot = *output_slot
-            .get(&(self.master_node_id, 0))
+        let master_output_socket = self.graph.outputs_of(self.master_node_id)[0];
+
+        let master_output_slot = *output_slots
+            .get(&master_output_socket)
             .ok_or(EngineError::NodeNotFound(self.master_node_id))?;
 
         Ok(CompiledGraph {

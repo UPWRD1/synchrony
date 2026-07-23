@@ -1,4 +1,4 @@
-use std::{borrow::Cow, marker::PhantomData};
+use std::marker::PhantomData;
 
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
@@ -24,14 +24,6 @@ impl<K: Kind> TrackReader<K> {
             channels,
         }
     }
-}
-
-impl TrackReader<Audio> {
-    const OUTPUTS: &'static [Socket] = &[Socket {
-        name: "audio out",
-        kind: DataKind::Audio,
-        visible: true,
-    }];
 }
 
 pub struct TrackReaderState {
@@ -60,15 +52,11 @@ impl Node for TrackReader<Audio> {
         }
     }
 
-    fn inputs(&self) -> Cow<'_, [Socket]> {
-        Cow::Borrowed(&[])
+    fn spec_in(&self) -> Vec<Socket> {
+        vec![]
     }
 
-    fn input(&mut self, _: crate::model::flow::SocketIndex) -> Option<&Socket> {
-        None
-    }
-
-    fn outputs(&self) -> Cow<'_, [Socket]> {
-        Cow::Borrowed(Self::OUTPUTS)
+    fn spec_out(&self) -> Vec<Socket> {
+        vec![Socket::new(DataKind::Audio, "audio out", true)]
     }
 }

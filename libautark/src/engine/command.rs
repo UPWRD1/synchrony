@@ -1,8 +1,10 @@
+use std::marker::PhantomData;
+
 use crate::{
     engine::tick::Tick,
     model::{
         Kind, Stored,
-        flow::{Link, Node, NodeID, SocketIndex, nodes::trackreader::TrackReader},
+        flow::{Link, Node, NodeID, SocketID, nodes::trackreader::TrackReader},
         project::ProjectData,
     },
 };
@@ -71,30 +73,64 @@ pub struct AddNode<N: Node> {
 impl<N: Node> Command for AddNode<N> {
     type Output = NodeID;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
-        Ok(project.add_node(self.node))
+        Ok(project.graph.add_node(self.node))
     }
 }
 
 pub struct AddLink {
-    pub from: (NodeID, SocketIndex),
-    pub to: (NodeID, SocketIndex),
+    pub from: SocketID,
+    pub to: SocketID,
 }
 
 impl Command for AddLink {
-    type Output = Option<Link>;
+    type Output = Option<SocketID>;
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
         project.add_link(self.from, self.to)
     }
 }
 
 pub struct RemoveLink {
-    pub from: (NodeID, SocketIndex),
-    pub to: (NodeID, SocketIndex),
+    pub from: SocketID,
+    pub to: SocketID,
 }
 
 impl Command for RemoveLink {
     type Output = ();
     fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
         project.remove_link(self.from, self.to)
+    }
+}
+
+pub struct AddNodeInput<K: Kind> {
+    pub node_id: NodeID,
+    _p: PhantomData<K>,
+}
+
+impl<K: Kind> AddNodeInput<K> {
+    pub fn new(node_id: NodeID) -> Self {
+        Self {
+            node_id,
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<K: Kind> Command for AddNodeInput<K> {
+    type Output = SocketID; // index of the newly created socket
+    fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
+        project
+            .graph
+            .add_node_input(self.node_id, K::into_datakind())
+    }
+}
+
+pub struct RemoveNodeInput {
+    pub node_id: NodeID,
+}
+
+impl Command for RemoveNodeInput {
+    type Output = ();
+    fn execute(self, project: &mut ProjectData) -> Result<Self::Output> {
+        project.remove_node_input(self.node_id)
     }
 }

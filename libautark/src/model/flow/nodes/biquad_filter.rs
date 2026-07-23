@@ -1,4 +1,4 @@
-use std::{borrow::Cow, f32::consts::PI};
+use std::f32::consts::PI;
 
 use crate::{
     engine::{SlotIndex, tick::Tick},
@@ -40,17 +40,6 @@ pub struct BiquadFilterState {
 }
 
 impl BiquadFilter {
-    const INPUTS: &'static [Socket] = &[Socket {
-        kind: DataKind::Audio,
-        name: "in",
-        visible: true,
-    }];
-    const OUTPUTS: &'static [Socket] = &[Socket {
-        kind: DataKind::Audio,
-        name: "out",
-        visible: true,
-    }];
-
     pub const BUTTERWORTH_Q: f32 = 0.707;
 
     pub fn new(
@@ -130,19 +119,8 @@ impl BiquadFilter {
 impl Node for BiquadFilter {
     type State = BiquadFilterState;
 
-    fn inputs(&self) -> Cow<'_, [Socket]> {
-        Cow::Borrowed(Self::INPUTS)
-    }
-
-    fn input(&mut self, idx: crate::model::flow::SocketIndex) -> Option<&Socket> {
-        Self::INPUTS.get(idx)
-    }
     fn init_state(&self) -> Self::State {
         BiquadFilterState { s1: 0.0, s2: 0.0 }
-    }
-
-    fn outputs(&self) -> Cow<'_, [Socket]> {
-        Cow::Borrowed(Self::OUTPUTS)
     }
 
     fn process(
@@ -171,5 +149,13 @@ impl Node for BiquadFilter {
                 output_buf[out_start + ch] = y;
             }
         }
+    }
+
+    fn spec_in(&self) -> Vec<Socket> {
+        vec![Socket::new(DataKind::Audio, "in", true)]
+    }
+
+    fn spec_out(&self) -> Vec<Socket> {
+        vec![Socket::new(DataKind::Audio, "out", true)]
     }
 }

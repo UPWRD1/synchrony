@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use crate::{
     engine::{SlotIndex, bbp::PoolExecutor, tick::Tick},
     model::{
@@ -12,30 +10,8 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Master;
 
-impl Master {
-    const INPUTS: &'static [Socket] = &[Socket {
-        kind: DataKind::Audio,
-        name: "input",
-        visible: true,
-    }];
-
-    const OUTPUTS: &'static [Socket] = &[Socket {
-        kind: DataKind::Audio,
-        name: "output",
-        visible: false,
-    }];
-}
-
 impl Node for Master {
     type State = ();
-
-    fn inputs(&self) -> Cow<'_, [Socket]> {
-        Cow::Borrowed(Self::INPUTS)
-    }
-
-    fn outputs(&self) -> Cow<'_, [Socket]> {
-        Cow::Borrowed(Self::OUTPUTS)
-    }
 
     fn init_state(&self) -> Self::State {}
 
@@ -54,10 +30,11 @@ impl Node for Master {
         output_buf.copy_from_slice(input_buf);
     }
 
-    fn input(&mut self, idx: crate::model::flow::SocketIndex) -> Option<&Socket> {
-        match idx {
-            0 => Some(&Self::INPUTS[0]),
-            _ => None,
-        }
+    fn spec_in(&self) -> Vec<Socket> {
+        vec![Socket::new(DataKind::Audio, "in", true)]
+    }
+
+    fn spec_out(&self) -> Vec<Socket> {
+        vec![Socket::new(DataKind::Audio, "out", false)]
     }
 }
