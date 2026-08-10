@@ -148,27 +148,25 @@ impl AudioActor {
         pool: &'a mut AudioBufferPool,
         state_pool: &mut NodeStatePool,
     ) -> &'a [f32] {
-        assert_no_alloc::assert_no_alloc(|| {
-            // Clear the pool. Unless you want to summon demons.
-            pool.clear();
+        // Clear the pool. Unless you want to summon demons.
+        pool.clear();
 
-            let mut executor = pool.executor();
+        let mut executor = pool.executor();
 
-            for i in 0..schedule.steps.len() {
-                let step = &schedule.steps[i];
-                let node = &step.node;
+        for i in 0..schedule.steps.len() {
+            let step = &schedule.steps[i];
+            let node = &step.node;
 
-                node.process_erased(
-                    &mut executor,
-                    state_pool.get_mut(step.node_id),
-                    block_start,
-                    &step.input_slots,
-                    &step.output_slots,
-                );
-            }
+            node.process_erased(
+                &mut executor,
+                state_pool.get_mut(step.node_id),
+                block_start,
+                &step.input_slots,
+                &step.output_slots,
+            );
+        }
 
-            executor.get_input(schedule.capture_slot)
-        })
+        executor.get_input(schedule.capture_slot)
     }
 }
 

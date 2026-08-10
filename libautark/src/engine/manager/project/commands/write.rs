@@ -268,10 +268,14 @@ impl Command<Write> for Publish {
 
     async fn execute(self, mut actor: <Write as Permission<Self::Actor>>::Guard) -> Self::Output {
         actor
-            .write(async |proj| {
-                proj.publish_current(&self.asset_h, self.filter.as_deref())
-                    .await
-            })
+            .data
+            .publish_current(&self.asset_h, self.filter.as_deref())
             .await
+        // actor
+        //     .write(async |proj| {
+        //         proj.publish_current(&self.asset_h, self.filter.as_deref())
+        //             .await
+        //     })
+        //     .await
     }
 }

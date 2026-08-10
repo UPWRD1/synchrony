@@ -35,6 +35,11 @@ impl NodeStatePool {
         }
     }
 
+    /// Get a mutable reference to a node's state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there is no state entry for the provided [`NodeID`].
     pub fn get_mut(&mut self, id: NodeID) -> &mut dyn Any {
         self.states
             .get_mut(id)
