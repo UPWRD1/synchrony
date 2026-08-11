@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 /// Atomic unit of time within the [`Engine`](super::Engine).
 ///
-/// Because currently 1 [`Tick`] = 1 sample, the number of ticks/sec depends on the sample rate of the [`Engine`](super::Engine).
+/// Because currently 1 [`Tick`] = 1 frame, the number of ticks/sec depends on the sample rate of the [`Engine`](super::Engine).
 /// This means that [`Tick`]s from different [`Engine`](super::Engine)s are NOT guaranteed to be the same
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Tick(pub u64);
@@ -20,6 +20,11 @@ impl Tick {
     /// Convert a tick value to a number of elapsed seconds
     pub fn as_secs(self, sample_rate: u32) -> f64 {
         self.0 as f64 / f64::from(sample_rate)
+    }
+
+    /// Translate a tick a.
+    pub fn to_sample_count(self, channels: u16) -> u64 {
+        self.0 * u64::from(channels)
     }
 }
 

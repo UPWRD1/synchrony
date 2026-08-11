@@ -21,9 +21,11 @@ impl AudioBufferPool {
         }
     }
 
+    /// Clear the memory of the AudioBufferPool.
     #[inline]
-    pub fn clear(&mut self) {
-        self.memory.fill(0.0f32);
+    pub fn clear(&mut self, active_slots: usize) {
+        self.memory[..active_slots * self.block_size].fill(0.0f32);
+        // self.memory.fill(0.0f32);
     }
 
     /// Creates an execution context that allows unsafe, arbitrary slot slicing

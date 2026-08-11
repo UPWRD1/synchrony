@@ -103,6 +103,7 @@ impl DataKind {
 pub struct RenderBlock<'b> {
     buf: &'b mut [f32],
     block_start: Tick,
+    block_end: Tick,
     channels: u16,
 }
 

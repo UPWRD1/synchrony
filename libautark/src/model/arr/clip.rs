@@ -57,8 +57,8 @@ impl Clip<Audio> for AudioClip {
 
 #[derive(Debug, Clone)]
 pub struct ResolvedAudioClip {
-    pub start: Tick,
-    pub length: Tick,
+    pub start_frame: Tick,
+    pub length_frames: Tick,
     asset: AudioAsset,
 }
 
@@ -67,14 +67,12 @@ impl ResolvedAudioClip {
         let asset = asset_h.call(WaitForAudioAsset(clip.asset_id)).await?;
 
         Ok(Self {
-            start: clip.start,
-            length: clip.length,
+            start_frame: clip.start,
+            length_frames: clip.length,
             asset: asset.clone(),
         })
     }
 }
-
-type Type = usize;
 
 impl Renderable for ResolvedAudioClip {
     fn render(
@@ -82,32 +80,28 @@ impl Renderable for ResolvedAudioClip {
         RenderBlock {
             buf,
             block_start,
+            block_end,
             channels,
         }: &mut RenderBlock,
     ) {
-        let block_len: Tick = (buf.len() / *channels as usize).into();
-
-        let block_end = *block_start + block_len;
-
         match &self.asset.payload {
             AudioAssetPayload::ResidentInterleaved(samples) => {
-                let clip_end = self.start + self.length;
-                let overlap_start = (*block_start).max(self.start);
-                let overlap_end = block_end.min(clip_end);
+                let clip_end = self.start_frame + self.length_frames;
+                let overlap_start = (*block_start).max(self.start_frame);
+                let overlap_end = (*block_end).min(clip_end);
                 assert!(
                     overlap_start < overlap_end,
                     "eventually figure out what goes here"
                 );
                 for frame in (overlap_start.0)..overlap_end.0 {
-                    let src_idx = ((frame - self.start.0) as usize) * self.asset.channels as usize;
-                    let dst_idx = ((frame - block_start.0) as usize) * self.asset.channels as Type;
-                    for ch in 0..*channels as usize {
-                        let src_ch = ch.min(self.asset.channels as usize - 1);
-                        if let (Some(&sample), Some(dest)) =
-                            (samples.get(src_idx + src_ch), buf.get_mut(dst_idx + ch))
-                        {
-                            *dest += sample * self.asset.gain;
-                        }
+                    let src_idx =
+                        ((frame - self.start_frame.0) as usize) * self.asset.channels as usize;
+                    let dst_idx = ((frame - block_start.0) as usize) * *channels as usize;
+                    for dest_ch in 0..*channels as usize {
+                        let src_ch = dest_ch.min(self.asset.channels as usize - 1);
+                        let (sample, dest) =
+                            (samples[src_idx + src_ch], &mut buf[dst_idx + dest_ch]);
+                        *dest += sample * self.asset.gain;
                     }
                 }
             }

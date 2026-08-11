@@ -17,6 +17,7 @@ static ALLOC: AllocDisabler = AllocDisabler;
 
 use crate::{
     engine::{
+        Tick,
         commands::{
             AddClip, AddLink, AddNode, AddNodeInput, AddTrack, GetMasterNodeId, InputSocketOf,
             LoadAudioAsset, OutputSocketOf, Play, TransportCmd, WaitForAudioAsset,
@@ -25,6 +26,7 @@ use crate::{
     },
     model::{
         Audio,
+        asset::Asset,
         flow::nodes::{biquad_filter::BiquadFilter, sum::Sum},
         project::ProjectData,
     },
@@ -61,7 +63,7 @@ pub async fn demo() -> Result<()> {
             .get(WaitForAudioAsset(song_asset.clone().await))
             .await
             .unwrap();
-        Ok::<u64, anyhow::Error>(asset.len as u64 / u64::from(asset.channels))
+        Ok::<Tick, anyhow::Error>(asset.length_frames())
     };
 
     let filter1 = engine
@@ -132,7 +134,7 @@ pub async fn demo() -> Result<()> {
 
     let clap_len = async {
         let asset = &engine.get(WaitForAudioAsset(clap_asset)).await.unwrap();
-        Ok::<_, anyhow::Error>(asset.len as u64 / u64::from(asset.channels))
+        Ok::<_, anyhow::Error>(asset.length_frames())
     };
 
     let (clap_track, clap_node) = engine
@@ -149,16 +151,16 @@ pub async fn demo() -> Result<()> {
     engine
         .fire(AddClip::<Audio> {
             track_id: song_track,
-            start: engine::tick::Tick(0),
-            end: engine::tick::Tick(song_len.await?),
+            start: Tick(0),
+            end: song_len.await?,
             asset_id: song_asset.await,
         })
         .await;
     engine
         .fire(AddClip::<Audio> {
             track_id: clap_track,
-            start: engine::tick::Tick(1000),
-            end: engine::tick::Tick(clap_len.await?),
+            start: Tick(1000),
+            end: clap_len.await?,
             asset_id: clap_asset,
         })
         .await;
@@ -172,10 +174,10 @@ pub async fn demo() -> Result<()> {
 
     engine.publish(None).await;
 
-    engine.move_playhead(engine::tick::Tick(0));
+    engine.move_playhead(Tick(0));
     engine.fire(Play).await;
     let mut buf = String::new();
-    std::io::stdin().read_line(&mut buf).unwrap();
+    tokio::task::spawn_blocking(move || std::io::stdin().read_line(&mut buf)).await;
     engine.fire(TransportCmd(TransportState::Stopped)).await;
     Ok::<_, anyhow::Error>(())
 }
@@ -183,7 +185,7 @@ pub async fn demo() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn it_works() {
         demo().await.unwrap();
     }

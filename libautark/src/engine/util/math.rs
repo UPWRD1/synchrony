@@ -10,7 +10,7 @@ pub const fn fast_inv_sqrt(number: f32) -> f32 {
     const THREEHALFS: f32 = 1.5;
 
     // Reinterpret the f32 as its bits
-    let mut i: i32 = number.to_bits() as i32;
+    let mut i: i32 = number.to_bits().cast_signed();
 
     // Because the bit representation of an IEEE-754 32-bit float is ~ roughly
     // the numbers logbase(2) representation, we can do some black magic to get the approximate square root really fast.
@@ -28,3 +28,7 @@ pub const fn fast_inv_sqrt(number: f32) -> f32 {
 }
 
 pub const F32_EQ_ERR_MARGIN: f32 = 0.00001;
+
+pub const fn deinterleave_len(buf_len: usize, channels: u16) -> usize {
+    buf_len / channels as usize
+}

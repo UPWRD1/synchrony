@@ -384,7 +384,10 @@ mod tests {
 
         let order = graph.topo_sort(None)?;
 
-        assert_eq!(order, vec![utility_node_2, graph.master_node_id]);
+        assert_eq!(
+            order,
+            vec![utility_node_1, utility_node_2, graph.master_node_id]
+        );
         Ok(())
     }
 

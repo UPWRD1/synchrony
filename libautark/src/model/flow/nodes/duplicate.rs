@@ -44,7 +44,7 @@ impl Node for Duplicate<Audio> {
     ) {
         let input = pool.get_input(inputs[0]);
         for output_slot in outputs {
-            let output_buf = pool.get_output(outputs[*output_slot]);
+            let output_buf = pool.get_output(*output_slot);
             for sample_idx in 0..pool.block_size {
                 output_buf[sample_idx] += input[sample_idx];
             }

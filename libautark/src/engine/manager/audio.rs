@@ -1,6 +1,6 @@
 //! Actor for managing the audio thread/callback
 
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -9,7 +9,7 @@ use cpal::traits::StreamTrait;
 
 use crate::engine::{
     EngineConfig,
-    constants::{GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
+    constants::{FIXED_BLOCK_SIZE, GARBAGE_RING_CAPACITY, MAX_BUFFER_SLOTS, UPDATE_RING_CAPACITY},
     manager::{Actor, ActorRef, Command, HasActorRef, Permission, Write},
     schedule::CompiledSchedule,
     state::{Garbage, LiveUpdate, NodeStatePool},
@@ -94,15 +94,21 @@ impl AudioActor {
         use cpal::traits::DeviceTrait;
         let channels = config.config.channels;
         let device = config.device.clone();
-        let mut buffer_pool = AudioBufferPool::new(MAX_BUFFER_SLOTS, 1024);
+        let mut buffer_pool = AudioBufferPool::new(MAX_BUFFER_SLOTS, FIXED_BLOCK_SIZE);
 
         let mut state_pool = NodeStatePool::new();
         let mut current: Option<LiveUpdate> = None;
+
+        let block_size = buffer_pool.block_size; // total interleaved samples per internal render
+        let output_frames_per_block = block_size / channels as usize;
+        let mut carry: VecDeque<f32> = VecDeque::with_capacity(block_size);
+
         let stream = device.build_output_stream(
             config.config,
             move |data: &mut [T], _info: &cpal::OutputCallbackInfo| {
                 assert_no_alloc::assert_no_alloc(|| {
                     data.fill(T::from_sample(0.0));
+
                     // Tier 1: drain any pending structural updates. Zero
                     // allocation: everything was pre-built off-thread.
                     while let Ok(mut update) = update_rx.pop() {
@@ -113,24 +119,31 @@ impl AudioActor {
                     }
 
                     if !transport.is_playing() {
+                        carry.clear();
                         return;
                     }
-                    let frame_count = data.len() / channels as usize;
-                    let start = playhead.fetch_add(frame_count as u64, Ordering::Relaxed);
-
-                    let Some(LiveUpdate { schedule, .. }) = current.as_ref() else {
-                        return;
-                    };
-
-                    let mixed = Self::execute_block(
-                        schedule,
-                        Tick(start),
-                        &mut buffer_pool,
-                        &mut state_pool,
-                    );
-
-                    for (dst, &src) in data.iter_mut().zip(mixed) {
-                        *dst = T::from_sample(src);
+                    let mut written = 0;
+                    while written < data.len() {
+                        if carry.is_empty() {
+                            let Some(LiveUpdate { schedule, .. }) = current.as_ref() else {
+                                break;
+                            };
+                            let start = playhead
+                                .fetch_add(output_frames_per_block as u64, Ordering::Relaxed);
+                            let mixed = Self::execute_block(
+                                schedule,
+                                Tick(start),
+                                &mut buffer_pool,
+                                &mut state_pool,
+                            );
+                            carry.extend(mixed.iter().copied());
+                        }
+                        let n = (data.len() - written).min(carry.len());
+                        for i in 0..n {
+                            data[written + i] = T::from_sample(carry[i]);
+                        }
+                        carry.drain(0..n);
+                        written += n;
                     }
                 });
             },
@@ -149,7 +162,7 @@ impl AudioActor {
         state_pool: &mut NodeStatePool,
     ) -> &'a [f32] {
         // Clear the pool. Unless you want to summon demons.
-        pool.clear();
+        pool.clear(schedule.buffer_count);
 
         let mut executor = pool.executor();
 

@@ -9,7 +9,10 @@ use std::{path::PathBuf, sync::Arc};
 use serde::Serialize;
 
 use crate::{
-    engine::asset::{AssetRegistry, AssetSlot},
+    engine::{
+        Tick,
+        asset::{AssetRegistry, AssetSlot},
+    },
     model::{Audio, Kind, Stored},
 };
 
@@ -34,7 +37,9 @@ slotmap::__serialize_key!(AudioAssetID);
 slotmap::new_key_type!();
 
 /// Trait defining an [`Asset`] of a certain [`Kind`].
-pub trait Asset<K: Kind> {}
+pub trait Asset<K: Kind> {
+    fn length_frames(&self) -> Tick;
+}
 
 #[derive(Debug)]
 /// Defines the loading state of an [`Asset`].
@@ -60,7 +65,7 @@ pub struct AudioAsset {
     pub sample_rate: u32,
     pub channels: u16,
     pub path: PathBuf,
-    pub len: usize,
+    pub len_samples: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -86,4 +91,8 @@ impl Stored for AudioAsset {
     }
 }
 
-impl Asset<Audio> for AudioAsset {}
+impl Asset<Audio> for AudioAsset {
+    fn length_frames(&self) -> Tick {
+        (self.len_samples * self.channels as usize).into()
+    }
+}

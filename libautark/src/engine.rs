@@ -25,7 +25,7 @@ use crate::{
         asset::AssetActor,
         audio::AudioActor,
         commands::{Publish, UpdateLive},
-        constants::DEFAULT_MANAGER_CAPACITY,
+        constants::{DEFAULT_MANAGER_CAPACITY, FIXED_BLOCK_SIZE},
         manager::Command,
         project::ProjectActor,
     },
@@ -63,7 +63,8 @@ impl EngineConfig {
         let sample_format = supported.sample_format();
         let sample_rate = supported.sample_rate();
         let channels = supported.channels();
-        let config: StreamConfig = supported.into();
+        let mut config: StreamConfig = supported.into();
+        config.buffer_size = cpal::BufferSize::Fixed(FIXED_BLOCK_SIZE as u32);
         println!(
             "output device config: sr: {sample_rate} Hz, {channels} ch, format {sample_format:?}"
         );

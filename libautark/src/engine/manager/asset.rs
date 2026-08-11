@@ -131,14 +131,14 @@ impl AssetRegistry {
         println!();
         let resampled =
             Self::resample_rubato(&samples, channels, source_sample_rate, target_sample_rate);
-        let len = resampled.len();
+        let len_samples = resampled.len();
         let audio_asset = AudioAsset {
             payload: AudioAssetPayload::ResidentInterleaved(Arc::from(resampled)),
             channels,
             sample_rate: target_sample_rate,
             gain: 1.0,
             path,
-            len,
+            len_samples,
         };
         Ok(audio_asset)
     }

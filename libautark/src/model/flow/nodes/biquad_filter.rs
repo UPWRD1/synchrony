@@ -35,8 +35,7 @@ pub struct BiquadFilter {
 
 pub struct BiquadFilterState {
     // Delay lines (history buffers)
-    s1: f32,
-    s2: f32,
+    history: Vec<(f32, f32)>,
 }
 
 impl BiquadFilter {
@@ -121,7 +120,9 @@ impl Node for BiquadFilter {
     type State = BiquadFilterState;
 
     fn init_state(&self) -> Self::State {
-        BiquadFilterState { s1: 0.0, s2: 0.0 }
+        BiquadFilterState {
+            history: vec![(0.0, 0.0); self.channels],
+        }
     }
 
     fn process(
@@ -138,13 +139,14 @@ impl Node for BiquadFilter {
         for (frame, chunk) in input_buf.chunks(self.channels).enumerate() {
             let out_start = frame * self.channels;
             for (ch, &x) in chunk.iter().enumerate() {
-                let y = (self.b0 * x) + state.s1;
+                let (s1, s2) = &mut state.history[ch];
+                let y = (self.b0 * x) + *s1;
 
                 // Step 2: Update the s1 accumulator for the next sample pass
-                state.s1 = (self.b1 * x) - (self.a1 * y) + state.s2;
+                *s1 = (self.b1 * x) - (self.a1 * y) + *s2;
 
                 // Step 3: Update the s2 accumulator
-                state.s2 = (self.b2 * x) - (self.a2 * y);
+                *s2 = (self.b2 * x) - (self.a2 * y);
 
                 output_buf[out_start + ch] = y;
             }

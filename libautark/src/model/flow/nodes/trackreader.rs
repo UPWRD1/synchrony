@@ -2,7 +2,11 @@ use core::marker::PhantomData;
 use std::collections::BTreeMap;
 
 use crate::{
-    engine::{Tick, schedule::SlotIndex, util::abp::PoolExecutor},
+    engine::{
+        Tick,
+        schedule::SlotIndex,
+        util::{abp::PoolExecutor, math::deinterleave_len},
+    },
     model::{
         Audio, DataKind, Kind, RenderBlock, Renderable, Stored,
         arr::clip::ResolvedAudioClip,
@@ -50,7 +54,7 @@ impl Node for TrackReader<Audio> {
     ) {
         let output_buf = pool.get_output(outputs[0]);
         // Deinterleave
-        let block_len: Tick = (output_buf.len() / self.channels as usize).into();
+        let block_len: Tick = deinterleave_len(output_buf.len(), self.channels).into();
         let block_end = block_start + block_len;
 
         let lookback = state
@@ -58,7 +62,7 @@ impl Node for TrackReader<Audio> {
             .range(..block_start)
             .next_back()
             .map(|(_, c)| c)
-            .filter(|c| c.start + c.length > block_start);
+            .filter(|c| c.start_frame + c.length_frames > block_start);
 
         let active = lookback
             .into_iter()
@@ -67,6 +71,7 @@ impl Node for TrackReader<Audio> {
         let mut block = RenderBlock {
             buf: output_buf,
             block_start,
+            block_end,
             channels: self.channels,
         };
         for clip in active {
